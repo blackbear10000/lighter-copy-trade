@@ -45,8 +45,8 @@ class HealthMonitor:
             root_api = lighter.RootApi(client)
             status = await root_api.status()
             
-            # Check if status.status == 1 (healthy)
-            is_healthy = status.status == 1 if hasattr(status, 'status') else False
+            # Check if status.status == 200 (healthy)
+            is_healthy = status.status == 200 if hasattr(status, 'status') else False
             
             self.is_healthy = is_healthy
             self.last_check = datetime.now()
