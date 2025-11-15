@@ -96,6 +96,61 @@ Or using symbol:
 }
 ```
 
+#### GET /api/account/{account_index}
+
+Get account information including balance, positions, and PnL.
+
+**Path Parameters:**
+- `account_index` (integer, required): Account index to query
+
+**Response:**
+```json
+{
+  "account_index": 281474976639902,
+  "l1_address": "0xA52458D77266a7b8566D0CCE608a0eCC72229A60",
+  "available_balance": "96.081014",
+  "collateral": "100.005758",
+  "total_asset_value": "99.844158",
+  "cross_asset_value": "99.844158",
+  "status": 0,
+  "positions": [
+    {
+      "market_id": 51,
+      "symbol": "RESOLV",
+      "position": "80",
+      "position_value": "11.290560",
+      "avg_entry_price": "0.143152",
+      "unrealized_pnl": "-0.161600",
+      "realized_pnl": "0.000000",
+      "sign": 1
+    }
+  ]
+}
+```
+
+**Response Fields:**
+- `account_index`: Account index
+- `l1_address`: Layer 1 address
+- `available_balance`: Available balance in USDC
+- `collateral`: Total collateral
+- `total_asset_value`: Total asset value
+- `cross_asset_value`: Cross asset value
+- `status`: Account status (0 = inactive, 1 = active)
+- `positions`: Array of position information
+  - `market_id`: Market ID
+  - `symbol`: Trading symbol
+  - `position`: Position size
+  - `position_value`: Position value in USDC
+  - `avg_entry_price`: Average entry price
+  - `unrealized_pnl`: Unrealized profit/loss
+  - `realized_pnl`: Realized profit/loss
+  - `sign`: Position direction (1 = long, -1 = short)
+
+**Error Responses:**
+- `404`: Account not found in configuration
+- `500`: Failed to retrieve account information
+- `503`: Lighter API is currently unavailable
+
 #### GET /health
 
 Check service health status.

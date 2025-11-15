@@ -2,7 +2,7 @@
 Pydantic models for API request/response validation.
 """
 
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -43,4 +43,28 @@ class ErrorResponse(BaseModel):
     status: str = "error"
     error_code: str
     message: str
+
+
+class PositionInfo(BaseModel):
+    """Position information model."""
+    market_id: int
+    symbol: str
+    position: str
+    position_value: str
+    avg_entry_price: str
+    unrealized_pnl: str
+    realized_pnl: str
+    sign: int  # 1 for long, -1 for short
+
+
+class AccountInfoResponse(BaseModel):
+    """Account information response model."""
+    account_index: int
+    l1_address: str
+    available_balance: str
+    collateral: str
+    total_asset_value: str
+    cross_asset_value: str
+    positions: List[PositionInfo]
+    status: int  # 0 = inactive, 1 = active
 
