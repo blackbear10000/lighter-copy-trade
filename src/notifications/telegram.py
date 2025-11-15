@@ -146,15 +146,40 @@ class TelegramService:
                             else:  # Short position
                                 pnl_pct = ((avg_entry_price - current_price) / avg_entry_price) * 100
                         
-                        # Calculate stop loss price based on configured ratio
+                        # Calculate stop loss price based on actual margin
                         stop_loss_price = 0.0
                         stop_loss_str = "N/A"
-                        if avg_entry_price > 0:
-                            if sign == 1:  # Long position
-                                stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
-                            else:  # Short position
-                                stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
-                            stop_loss_str = f"${stop_loss_price:.6f}"
+                        if avg_entry_price > 0 and abs(pos_size) > 0:
+                            # Get margin information
+                            allocated_margin = float(pos.get('allocated_margin', 0))
+                            initial_margin_fraction = float(pos.get('initial_margin_fraction', 0))
+                            
+                            # Calculate actual margin
+                            if allocated_margin > 0:
+                                margin = allocated_margin
+                            else:
+                                # Cross margin: calculate from position_value and margin fraction
+                                margin_fraction = initial_margin_fraction / 100.0 if initial_margin_fraction > 0 else 0.3333
+                                margin = pos_value * margin_fraction
+                            
+                            if margin > 0:
+                                # Calculate price change based on margin loss
+                                margin_loss = margin * self.config.stop_loss_ratio
+                                price_change = margin_loss / abs(pos_size)
+                                
+                                if sign == 1:  # Long position
+                                    stop_loss_price = avg_entry_price - price_change
+                                else:  # Short position
+                                    stop_loss_price = avg_entry_price + price_change
+                                
+                                stop_loss_str = f"${stop_loss_price:.6f}"
+                            else:
+                                # Fallback to price-based calculation
+                                if sign == 1:  # Long position
+                                    stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
+                                else:  # Short position
+                                    stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
+                                stop_loss_str = f"${stop_loss_price:.6f}"
                         
                         # Format position line with all information
                         pnl_sign = "+" if pnl >= 0 else ""

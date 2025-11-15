@@ -216,14 +216,78 @@ class TradingService:
     async def calculate_stop_loss_price(
         self,
         avg_entry_price: float,
+        position_size: float,
+        position_value: float,
+        allocated_margin: float,
+        initial_margin_fraction: float,
         is_long: bool,
         price_decimals: int
     ) -> int:
-        """Calculate stop loss price."""
-        if is_long:
-            stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
+        """
+        Calculate stop loss price based on actual margin invested, not leveraged position value.
+        
+        Args:
+            avg_entry_price: Average entry price
+            position_size: Position size (absolute value)
+            position_value: Position value (leveraged value)
+            allocated_margin: Allocated margin for this position (0 for cross margin)
+            initial_margin_fraction: Initial margin fraction percentage
+            is_long: True for long position, False for short
+            price_decimals: Price precision decimals
+            
+        Returns:
+            Stop loss price in integer format
+        """
+        # Calculate actual margin invested
+        # For isolated margin: use allocated_margin
+        # For cross margin: calculate from position_value and initial_margin_fraction
+        if allocated_margin > 0:
+            # Isolated margin mode: use allocated margin
+            margin = allocated_margin
         else:
-            stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
+            # Cross margin mode: calculate margin from position_value and margin fraction
+            # initial_margin_fraction is a percentage (e.g., 33.33 means 33.33%)
+            margin_fraction = initial_margin_fraction / 100.0 if initial_margin_fraction > 0 else 0.3333
+            margin = position_value * margin_fraction
+        
+        if margin <= 0:
+            logger.warning(
+                f"Cannot calculate stop loss: margin={margin}, falling back to price-based calculation"
+            )
+            # Fallback to price-based calculation if margin is invalid
+            if is_long:
+                stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
+            else:
+                stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
+        else:
+            # Calculate margin loss amount
+            margin_loss = margin * self.config.stop_loss_ratio
+            
+            # Calculate price change needed to cause this margin loss
+            # For long: price decrease causes loss
+            # For short: price increase causes loss
+            if abs(position_size) > 0:
+                price_change = margin_loss / abs(position_size)
+                
+                if is_long:
+                    # Long position: price decreases cause loss
+                    stop_loss_price = avg_entry_price - price_change
+                else:
+                    # Short position: price increases cause loss
+                    stop_loss_price = avg_entry_price + price_change
+            else:
+                # Fallback if position_size is invalid
+                logger.warning(f"Invalid position_size={position_size}, using price-based calculation")
+                if is_long:
+                    stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
+                else:
+                    stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
+        
+        logger.debug(
+            f"Stop loss calculation: margin={margin:.6f}, margin_loss={margin * self.config.stop_loss_ratio:.6f}, "
+            f"price_change={abs(stop_loss_price - avg_entry_price):.6f}, "
+            f"stop_loss_price={stop_loss_price:.6f}, entry_price={avg_entry_price:.6f}"
+        )
         
         return self.convert_price_to_integer(stop_loss_price, price_decimals)
     
@@ -301,10 +365,12 @@ class TradingService:
             
             account_data = accounts[0]
             available_balance = float(account_data.get('available_balance', 0))
+            total_asset_value = float(account_data.get('total_asset_value', 0))
             
             logger.info(
-                f"Account balance info: available_balance={available_balance}, "
-                f"reference_ratio={reference_position_ratio}, scaling_factor={self.config.scaling_factor}"
+                f"Account balance info: total_assets={total_asset_value}, "
+                f"available_balance={available_balance}, reference_ratio={reference_position_ratio}, "
+                f"scaling_factor={self.config.scaling_factor}"
             )
             
             # Handle close trade type
@@ -329,8 +395,9 @@ class TradingService:
                 f"symbol={resolved_symbol}"
             )
             
-            # Calculate position size
+            # Calculate position size based on total assets
             position_size = self.position_service.calculate_position_size(
+                total_assets=total_asset_value,
                 available_balance=available_balance,
                 reference_position_ratio=reference_position_ratio,
                 market_info=market_info,
@@ -338,14 +405,61 @@ class TradingService:
             )
             
             logger.info(
-                f"Position calculation: available_balance={available_balance}, "
-                f"quote_amount_calc={available_balance * reference_position_ratio * self.config.scaling_factor}, "
+                f"Position calculation: total_assets={total_asset_value}, "
+                f"available_balance={available_balance}, "
+                f"quote_amount_calc={total_asset_value * reference_position_ratio * self.config.scaling_factor}, "
                 f"position_size={position_size}"
             )
             
+            # Check if insufficient balance and send warning
+            if position_size and position_size.get('insufficient_balance', False):
+                required_amount = position_size.get('quote_amount', 0)
+                shortfall = required_amount - available_balance
+                warning_msg = (
+                    f"Insufficient available balance: Required {required_amount:.2f} USDC, "
+                    f"but only {available_balance:.2f} USDC available. Shortfall: {shortfall:.2f} USDC. "
+                    f"Trade will proceed if sufficient margin is available."
+                )
+                logger.warning(warning_msg)
+                await self.telegram_service.notify_error(
+                    "Insufficient Available Balance Warning",
+                    warning_msg,
+                    {
+                        "request_id": request_id,
+                        "account_index": account_index,
+                        "market_id": resolved_market_id,
+                        "symbol": resolved_symbol,
+                        "required_amount": required_amount,
+                        "available_balance": available_balance,
+                        "shortfall": shortfall,
+                        "total_assets": total_asset_value,
+                    }
+                )
+            
             if position_size is None:
-                error_msg = "Position size below minimum requirements"
-                logger.warning(f"Position size below minimum, skipping trade")
+                # Calculate what the quote_amount would have been to provide better error message
+                calculated_quote_amount = total_asset_value * reference_position_ratio * self.config.scaling_factor
+                min_base_amount = float(market_info.get('min_base_amount', 0))
+                min_quote_amount = float(market_info.get('min_quote_amount', 0))
+                
+                # Determine which requirement failed
+                if calculated_quote_amount < min_quote_amount:
+                    error_msg = (
+                        f"Calculated quote amount ({calculated_quote_amount:.6f}) is below minimum "
+                        f"({min_quote_amount:.6f}). Total assets ({total_asset_value:.6f}) * "
+                        f"ratio ({reference_position_ratio}) * scaling ({self.config.scaling_factor}) = "
+                        f"{calculated_quote_amount:.6f}"
+                    )
+                else:
+                    # Base amount would be the issue
+                    calculated_base_amount = calculated_quote_amount / current_price if current_price > 0 else 0
+                    error_msg = (
+                        f"Calculated base amount ({calculated_base_amount:.6f}) is below minimum "
+                        f"({min_base_amount:.6f}). Quote amount ({calculated_quote_amount:.6f}) is sufficient, "
+                        f"but base amount is too small at current price ({current_price:.6f})"
+                    )
+                
+                logger.warning(f"Position size below minimum, skipping trade: {error_msg}")
                 
                 # Send Telegram notification for insufficient size
                 await self.telegram_service.notify_error(
@@ -358,9 +472,14 @@ class TradingService:
                         "symbol": resolved_symbol,
                         "trade_type": trade_type,
                         "reference_position_ratio": reference_position_ratio,
+                        "total_assets": total_asset_value,
                         "available_balance": available_balance,
-                        "min_base_amount": market_info.get('min_base_amount'),
-                        "min_quote_amount": market_info.get('min_quote_amount'),
+                        "calculated_quote_amount": calculated_quote_amount,
+                        "calculated_base_amount": calculated_quote_amount / current_price if current_price > 0 else 0,
+                        "min_base_amount": min_base_amount,
+                        "min_quote_amount": min_quote_amount,
+                        "current_price": current_price,
+                        "scaling_factor": self.config.scaling_factor,
                     }
                 )
                 
@@ -668,11 +787,20 @@ class TradingService:
                     else:
                         logger.info(f"Cancelled stop loss order {order_index}: tx_hash={tx_hash}")
             
-            # Calculate stop loss price
+            # Get position value and margin information
+            position_value = float(position.get('position_value', 0))
+            allocated_margin = float(position.get('allocated_margin', 0))
+            initial_margin_fraction = float(position.get('initial_margin_fraction', 0))
+            
+            # Calculate stop loss price based on actual margin
             stop_loss_price_int = await self.calculate_stop_loss_price(
-                avg_entry_price,
-                is_long,
-                price_decimals
+                avg_entry_price=avg_entry_price,
+                position_size=abs(position_size),
+                position_value=position_value,
+                allocated_margin=allocated_margin,
+                initial_margin_fraction=initial_margin_fraction,
+                is_long=is_long,
+                price_decimals=price_decimals
             )
             
             # Convert position size to integer
