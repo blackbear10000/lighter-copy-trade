@@ -118,6 +118,9 @@ class TelegramService:
             if accounts and len(accounts) > 0:
                 positions = accounts[0].get('positions', [])
                 if positions:
+                    total_value = 0.0
+                    total_pnl = 0.0
+                    
                     for pos in positions:
                         pos_symbol = escape_markdown(str(pos.get('symbol', 'N/A')))
                         pos_size = float(pos.get('position', '0'))
@@ -125,6 +128,10 @@ class TelegramService:
                         pnl = float(pos.get('unrealized_pnl', '0'))
                         avg_entry_price = float(pos.get('avg_entry_price', '0'))
                         sign = pos.get('sign', 1)  # 1 for long, -1 for short
+                        
+                        # Accumulate total value and PnL
+                        total_value += pos_value
+                        total_pnl += pnl
                         
                         # Calculate current price from position value and size
                         current_price = 0.0
@@ -154,10 +161,15 @@ class TelegramService:
                         pnl_pct_sign = "+" if pnl_pct >= 0 else ""
                         message += (
                             f"- {pos_symbol}: {abs(pos_size):.6f} "
-                            f"(Entry: ${avg_entry_price:.6f}, "
+                            f"(Value: ${pos_value:.2f}, "
+                            f"Entry: ${avg_entry_price:.6f}, "
                             f"PnL: {pnl_sign}${pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%), "
                             f"Stop Loss: {stop_loss_str})\n"
                         )
+                    
+                    # Add total value and PnL summary
+                    total_pnl_sign = "+" if total_pnl >= 0 else ""
+                    message += f"\n*Total Value:* ${total_value:.2f} (PnL: {total_pnl_sign}${total_pnl:.2f})\n"
                 else:
                     message += "No open positions\n"
             else:
