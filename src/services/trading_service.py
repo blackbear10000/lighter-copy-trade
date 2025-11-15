@@ -89,7 +89,10 @@ class TradingService:
                 for market_id in market_ids:
                     try:
                         # Generate auth token using signer client
-                        auth_token = await signer_client.get_auth_token()
+                        auth_token, error = signer_client.create_auth_token_with_expiry()
+                        if error:
+                            logger.warning(f"Error creating auth token for market {market_id}: {error}")
+                            continue
                         
                         # Get active orders for this market
                         orders_response = await order_api.account_active_orders(
@@ -98,34 +101,55 @@ class TradingService:
                             auth=auth_token
                         )
                         
+                        # Convert response to dict
                         if hasattr(orders_response, 'to_dict'):
                             orders_dict = orders_response.to_dict()
                         else:
                             orders_dict = orders_response
                         
-                        orders = orders_dict.get('orders', []) if isinstance(orders_dict, dict) else []
+                        # Extract orders list
+                        orders = []
+                        if isinstance(orders_dict, dict):
+                            orders = orders_dict.get('orders', [])
+                        elif hasattr(orders_response, 'orders'):
+                            # If it's a model object, access the orders attribute
+                            orders_list = orders_response.orders
+                            if orders_list:
+                                orders = [order.to_dict() if hasattr(order, 'to_dict') else order for order in orders_list]
+                        
+                        logger.debug(f"Found {len(orders)} orders for market {market_id}")
                         
                         # Filter stop loss orders
                         for order in orders:
-                            order_type = order.get('type', '')
+                            # Handle both dict and model object
+                            if hasattr(order, 'to_dict'):
+                                order_dict = order.to_dict()
+                            else:
+                                order_dict = order
+                            
+                            order_type = order_dict.get('type', '')
+                            logger.debug(f"Order type: {order_type}, order: {order_dict}")
+                            
                             if order_type in ['stop-loss', 'stop-loss-limit']:
                                 # Get market symbol
                                 market_info = await self.market_service.get_market_info(market_id)
                                 symbol = market_info.get('symbol', f'ID{market_id}') if market_info else f'ID{market_id}'
                                 
                                 stop_loss_orders.append({
-                                    'order_index': order.get('order_index', 0),
-                                    'order_id': order.get('order_id', ''),
+                                    'order_index': order_dict.get('order_index', 0),
+                                    'order_id': order_dict.get('order_id', ''),
                                     'market_id': market_id,
                                     'symbol': symbol,
-                                    'trigger_price': str(order.get('trigger_price', '0')),
-                                    'price': str(order.get('price', '0')) if order.get('price') else None,
-                                    'base_amount': str(order.get('initial_base_amount', '0')),
-                                    'remaining_base_amount': str(order.get('remaining_base_amount', '0')),
+                                    'trigger_price': str(order_dict.get('trigger_price', '0')),
+                                    'price': str(order_dict.get('price', '0')) if order_dict.get('price') else None,
+                                    'base_amount': str(order_dict.get('initial_base_amount', '0')),
+                                    'remaining_base_amount': str(order_dict.get('remaining_base_amount', '0')),
                                     'order_type': order_type,
-                                    'status': order.get('status', 'unknown'),
-                                    'reduce_only': order.get('reduce_only', False),
+                                    'status': order_dict.get('status', 'unknown'),
+                                    'reduce_only': order_dict.get('reduce_only', False),
                                 })
+                        
+                        logger.info(f"Found {len([o for o in stop_loss_orders if o.get('market_id') == market_id])} stop loss orders for market {market_id}")
                     except Exception as e:
                         logger.warning(f"Error querying orders for market {market_id}: {e}")
                         continue
