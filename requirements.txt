@@ -1,0 +1,10 @@
+# Core dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+aiohttp>=3.9.0
+
+# Lighter SDK
+git+https://github.com/elliottech/lighter-python.git
+
