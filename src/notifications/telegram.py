@@ -120,10 +120,44 @@ class TelegramService:
                 if positions:
                     for pos in positions:
                         pos_symbol = escape_markdown(str(pos.get('symbol', 'N/A')))
-                        pos_size = str(pos.get('position', '0'))
-                        pos_value = str(pos.get('position_value', '0'))
-                        pnl = str(pos.get('unrealized_pnl', '0'))
-                        message += f"- {pos_symbol}: {pos_size} (Value: ${pos_value}, PnL: ${pnl})\n"
+                        pos_size = float(pos.get('position', '0'))
+                        pos_value = float(pos.get('position_value', '0'))
+                        pnl = float(pos.get('unrealized_pnl', '0'))
+                        avg_entry_price = float(pos.get('avg_entry_price', '0'))
+                        sign = pos.get('sign', 1)  # 1 for long, -1 for short
+                        
+                        # Calculate current price from position value and size
+                        current_price = 0.0
+                        if abs(pos_size) > 0:
+                            current_price = pos_value / abs(pos_size)
+                        
+                        # Calculate PnL percentage
+                        pnl_pct = 0.0
+                        if avg_entry_price > 0:
+                            if sign == 1:  # Long position
+                                pnl_pct = ((current_price - avg_entry_price) / avg_entry_price) * 100
+                            else:  # Short position
+                                pnl_pct = ((avg_entry_price - current_price) / avg_entry_price) * 100
+                        
+                        # Calculate stop loss price based on configured ratio
+                        stop_loss_price = 0.0
+                        stop_loss_str = "N/A"
+                        if avg_entry_price > 0:
+                            if sign == 1:  # Long position
+                                stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
+                            else:  # Short position
+                                stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
+                            stop_loss_str = f"${stop_loss_price:.6f}"
+                        
+                        # Format position line with all information
+                        pnl_sign = "+" if pnl >= 0 else ""
+                        pnl_pct_sign = "+" if pnl_pct >= 0 else ""
+                        message += (
+                            f"- {pos_symbol}: {abs(pos_size):.6f} "
+                            f"(Entry: ${avg_entry_price:.6f}, "
+                            f"PnL: {pnl_sign}${pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%), "
+                            f"Stop Loss: {stop_loss_str})\n"
+                        )
                 else:
                     message += "No open positions\n"
             else:
