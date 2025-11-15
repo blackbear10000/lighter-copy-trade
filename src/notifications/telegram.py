@@ -25,10 +25,9 @@ def escape_markdown(text: str) -> str:
     """
     text = str(text)
     # Only escape Markdown special characters that can cause parsing errors
-    # Don't escape dots in numbers, only escape them in contexts where they might be problematic
-    # Escape: _, *, [, ], (, ), ~, `, >, #, +, =, |, {, }, !
-    # Don't escape: . (dots in numbers are fine), - (hyphens are fine)
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '=', '|', '{', '}', '!']
+    # Don't escape: . (dots in numbers are fine), - (hyphens are fine), ( ) (parentheses are fine in most contexts)
+    # Escape: _, *, [, ], ~, `, >, #, +, =, |, {, }, !
+    special_chars = ['_', '*', '[', ']', '~', '`', '>', '#', '+', '=', '|', '{', '}', '!']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
     return text
@@ -107,7 +106,7 @@ class TelegramService:
         message = f"*Order Opened*\n"
         message += f"Time: {timestamp}\n"
         message += f"Account: {escape_markdown(str(account_index))}\n"
-        message += f"Market: {escape_markdown(symbol)} \\(ID: {escape_markdown(str(market_id))}\\)\n"
+        message += f"Market: {escape_markdown(symbol)} (ID: {market_id})\n"
         message += f"Type: {trade_type.upper()}\n"
         message += f"Amount: {base_amount:.6f} {escape_markdown(symbol)}\n"
         message += f"Value: ${quote_amount:.2f}\n"
@@ -124,7 +123,7 @@ class TelegramService:
                         pos_size = str(pos.get('position', '0'))
                         pos_value = str(pos.get('position_value', '0'))
                         pnl = str(pos.get('unrealized_pnl', '0'))
-                        message += f"- {pos_symbol}: {pos_size} \\(Value: ${pos_value}, PnL: ${pnl}\\)\n"
+                        message += f"- {pos_symbol}: {pos_size} (Value: ${pos_value}, PnL: ${pnl})\n"
                 else:
                     message += "No open positions\n"
             else:
@@ -162,7 +161,7 @@ class TelegramService:
         message = f"*Order Closed/Reduced*\n"
         message += f"Time: {timestamp}\n"
         message += f"Account: {escape_markdown(str(account_index))}\n"
-        message += f"Market: {escape_markdown(symbol)} \\(ID: {escape_markdown(str(market_id))}\\)\n"
+        message += f"Market: {escape_markdown(symbol)} (ID: {market_id})\n"
         message += f"Amount: {base_amount:.6f} {escape_markdown(symbol)}\n"
         message += f"Value: ${quote_amount:.2f}\n"
         message += f"Price: ${price:.6f}\n"
