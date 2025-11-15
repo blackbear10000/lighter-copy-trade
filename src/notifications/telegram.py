@@ -170,8 +170,33 @@ class TelegramService:
                     # Add total value and PnL summary
                     total_pnl_sign = "+" if total_pnl >= 0 else ""
                     message += f"\n*Total Value:* ${total_value:.2f} (PnL: {total_pnl_sign}${total_pnl:.2f})\n"
+                    
+                    # Add account total assets and leverage
+                    account_data = accounts[0]
+                    total_asset_value = float(account_data.get('total_asset_value', '0'))
+                    collateral = float(account_data.get('collateral', '0'))
+                    
+                    # Calculate leverage ratio
+                    leverage_ratio = 0.0
+                    if collateral > 0:
+                        leverage_ratio = total_asset_value / collateral
+                    
+                    message += f"*Account Total Assets:* ${total_asset_value:.2f}\n"
+                    message += f"*Leverage Ratio:* {leverage_ratio:.2f}x\n"
                 else:
                     message += "No open positions\n"
+                    
+                    # Even with no positions, show account info
+                    account_data = accounts[0]
+                    total_asset_value = float(account_data.get('total_asset_value', '0'))
+                    collateral = float(account_data.get('collateral', '0'))
+                    
+                    leverage_ratio = 0.0
+                    if collateral > 0:
+                        leverage_ratio = total_asset_value / collateral
+                    
+                    message += f"\n*Account Total Assets:* ${total_asset_value:.2f}\n"
+                    message += f"*Leverage Ratio:* {leverage_ratio:.2f}x\n"
             else:
                 message += "No open positions\n"
         
