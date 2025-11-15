@@ -3,6 +3,7 @@ Telegram notification service.
 """
 
 import aiohttp
+import re
 from typing import Dict, Optional, Any
 from datetime import datetime
 
@@ -10,6 +11,23 @@ from src.config import get_config
 from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def escape_markdown(text: str) -> str:
+    """
+    Escape special Markdown characters.
+    
+    Args:
+        text: Text to escape
+        
+    Returns:
+        Escaped text
+    """
+    # Escape special Markdown characters
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = str(text).replace(char, f'\\{char}')
+    return text
 
 
 class TelegramService:
@@ -84,23 +102,23 @@ class TelegramService:
         
         message = f"*Order Opened*\n"
         message += f"Time: {timestamp}\n"
-        message += f"Account: {account_index}\n"
-        message += f"Market: {symbol} (ID: {market_id})\n"
+        message += f"Account: {escape_markdown(str(account_index))}\n"
+        message += f"Market: {escape_markdown(symbol)} \\(ID: {escape_markdown(str(market_id))}\\)\n"
         message += f"Type: {trade_type.upper()}\n"
-        message += f"Amount: {base_amount:.6f} {symbol}\n"
-        message += f"Value: ${quote_amount:.2f}\n"
-        message += f"Price: ${price:.6f}\n"
+        message += f"Amount: {escape_markdown(f'{base_amount:.6f}')} {escape_markdown(symbol)}\n"
+        message += f"Value: ${escape_markdown(f'{quote_amount:.2f}')}\n"
+        message += f"Price: ${escape_markdown(f'{price:.6f}')}\n"
         
         if position_info:
             message += f"\n*Current Positions:*\n"
             positions = position_info.get('positions', [])
             if positions:
                 for pos in positions:
-                    pos_symbol = pos.get('symbol', 'N/A')
-                    pos_size = pos.get('position', '0')
-                    pos_value = pos.get('position_value', '0')
-                    pnl = pos.get('unrealized_pnl', '0')
-                    message += f"- {pos_symbol}: {pos_size} (Value: ${pos_value}, PnL: ${pnl})\n"
+                    pos_symbol = escape_markdown(str(pos.get('symbol', 'N/A')))
+                    pos_size = escape_markdown(str(pos.get('position', '0')))
+                    pos_value = escape_markdown(str(pos.get('position_value', '0')))
+                    pnl = escape_markdown(str(pos.get('unrealized_pnl', '0')))
+                    message += f"- {pos_symbol}: {pos_size} \\(Value: ${pos_value}, PnL: ${pnl}\\)\n"
             else:
                 message += "No open positions\n"
         
@@ -135,11 +153,11 @@ class TelegramService:
         
         message = f"*Order Closed/Reduced*\n"
         message += f"Time: {timestamp}\n"
-        message += f"Account: {account_index}\n"
-        message += f"Market: {symbol} (ID: {market_id})\n"
-        message += f"Amount: {base_amount:.6f} {symbol}\n"
-        message += f"Value: ${quote_amount:.2f}\n"
-        message += f"Price: ${price:.6f}\n"
+        message += f"Account: {escape_markdown(str(account_index))}\n"
+        message += f"Market: {escape_markdown(symbol)} \\(ID: {escape_markdown(str(market_id))}\\)\n"
+        message += f"Amount: {escape_markdown(f'{base_amount:.6f}')} {escape_markdown(symbol)}\n"
+        message += f"Value: ${escape_markdown(f'{quote_amount:.2f}')}\n"
+        message += f"Price: ${escape_markdown(f'{price:.6f}')}\n"
         
         if position_info:
             positions = position_info.get('positions', [])
@@ -148,8 +166,8 @@ class TelegramService:
                     unrealized_pnl = float(pos.get('unrealized_pnl', 0))
                     realized_pnl = float(pos.get('realized_pnl', 0))
                     message += f"\n*Profit/Loss:*\n"
-                    message += f"Unrealized PnL: ${unrealized_pnl:.2f}\n"
-                    message += f"Realized PnL: ${realized_pnl:.2f}\n"
+                    message += f"Unrealized PnL: ${escape_markdown(f'{unrealized_pnl:.2f}')}\n"
+                    message += f"Realized PnL: ${escape_markdown(f'{realized_pnl:.2f}')}\n"
                     break
         
         return message
@@ -181,7 +199,11 @@ class TelegramService:
         if context:
             message += f"\n*Context:*\n"
             for key, value in context.items():
-                message += f"{key}: {value}\n"
+                # Escape values to prevent Markdown parsing errors
+                # Keys are usually safe, but escape them too to be safe
+                escaped_key = escape_markdown(str(key))
+                escaped_value = escape_markdown(str(value))
+                message += f"{escaped_key}: {escaped_value}\n"
         
         return message
     
