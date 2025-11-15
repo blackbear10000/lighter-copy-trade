@@ -425,33 +425,34 @@ class TradingService:
                     raise Exception(f"Close order execution failed: {error}")
                 
                 # Wait a bit for the order to be processed
-                await asyncio.sleep(1)
+                await asyncio.sleep(3)
                 
                 # Get updated account info to check final PnL
                 updated_account_info = await self.get_account_info(account.index)
                 
-                # Calculate PnL: use updated account info if available, otherwise use before values
+                # Calculate PnL: When closing a position, the unrealized PnL becomes realized PnL
+                # The total realized PnL = previous realized PnL + unrealized PnL at close time
                 accounts_updated = updated_account_info.get('accounts', []) if updated_account_info else []
-                unrealized_pnl = unrealized_pnl_before
-                realized_pnl = realized_pnl_before
+                unrealized_pnl = 0.0  # Position closed, no unrealized PnL
+                realized_pnl = realized_pnl_before + unrealized_pnl_before  # Add unrealized to realized
                 
+                # Try to get updated realized PnL from account info if position still exists (partial close)
                 if accounts_updated and len(accounts_updated) > 0:
-                    # Try to find the position in updated info to get final PnL
                     updated_positions = accounts_updated[0].get('positions', [])
                     for pos in updated_positions:
                         if pos.get('market_id') == market_id:
-                            # Position still exists, use its PnL
-                            unrealized_pnl = float(pos.get('unrealized_pnl', unrealized_pnl_before))
-                            realized_pnl = float(pos.get('realized_pnl', realized_pnl_before))
+                            # Position still exists (partial close), use its PnL
+                            unrealized_pnl = float(pos.get('unrealized_pnl', 0))
+                            # For partial close, we need to calculate the realized portion
+                            # The realized PnL should be the difference
+                            updated_realized_pnl = float(pos.get('realized_pnl', 0))
+                            # If the updated realized PnL is greater, use it
+                            if updated_realized_pnl > realized_pnl_before:
+                                realized_pnl = updated_realized_pnl
+                            else:
+                                # Otherwise, calculate: previous realized + (previous unrealized - current unrealized)
+                                realized_pnl = realized_pnl_before + (unrealized_pnl_before - unrealized_pnl)
                             break
-                    else:
-                        # Position closed, calculate realized PnL from price difference
-                        # Realized PnL = (close_price - entry_price) * position_size * sign
-                        if avg_entry_price > 0:
-                            price_diff = current_price - avg_entry_price
-                            sign = 1 if position_size > 0 else -1
-                            realized_pnl = price_diff * abs(position_size) * sign
-                            unrealized_pnl = 0  # Position closed, no unrealized PnL
                 
                 # Create position info dict for notification
                 position_info_for_notification = {
@@ -463,6 +464,12 @@ class TradingService:
                         }]
                     }]
                 }
+                
+                logger.info(
+                    f"Close PnL calculation: unrealized_before={unrealized_pnl_before}, "
+                    f"realized_before={realized_pnl_before}, "
+                    f"final_realized={realized_pnl}, final_unrealized={unrealized_pnl}"
+                )
                 
                 # Send notification
                 await self.telegram_service.notify_order_closing(
