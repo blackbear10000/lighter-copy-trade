@@ -66,13 +66,16 @@ class TradingService:
             order_book_orders = await order_api.order_book_orders(market_id, 1)
             
             # Get best bid/ask price
+            # Price is returned as string like "0.143152", convert directly to float
             if order_book_orders.bids and len(order_book_orders.bids) > 0:
-                bid_price = float(order_book_orders.bids[0].price.replace(".", ""))
+                bid_price_str = order_book_orders.bids[0].price
+                bid_price = float(bid_price_str) if bid_price_str else None
             else:
                 bid_price = None
             
             if order_book_orders.asks and len(order_book_orders.asks) > 0:
-                ask_price = float(order_book_orders.asks[0].price.replace(".", ""))
+                ask_price_str = order_book_orders.asks[0].price
+                ask_price = float(ask_price_str) if ask_price_str else None
             else:
                 ask_price = None
             
@@ -176,7 +179,25 @@ class TradingService:
                 )
                 return {"success": False, "error": error_msg}
             
-            available_balance = float(account_info.get('available_balance', 0))
+            # Extract available balance from account info
+            # Account info structure: accounts[0].available_balance
+            accounts = account_info.get('accounts', [])
+            if not accounts or len(accounts) == 0:
+                error_msg = "No account data found in response"
+                await self.telegram_service.notify_error(
+                    "Account Data Error",
+                    error_msg,
+                    {"request_id": request_id, "account_index": account_index}
+                )
+                return {"success": False, "error": error_msg}
+            
+            account_data = accounts[0]
+            available_balance = float(account_data.get('available_balance', 0))
+            
+            logger.info(
+                f"Account balance info: available_balance={available_balance}, "
+                f"reference_ratio={reference_position_ratio}, scaling_factor={self.config.scaling_factor}"
+            )
             
             # Handle close trade type
             if trade_type == "close":
@@ -195,12 +216,23 @@ class TradingService:
                 )
                 return {"success": False, "error": error_msg}
             
+            logger.info(
+                f"Price info: current_price={current_price}, market_id={resolved_market_id}, "
+                f"symbol={resolved_symbol}"
+            )
+            
             # Calculate position size
             position_size = self.position_service.calculate_position_size(
                 available_balance=available_balance,
                 reference_position_ratio=reference_position_ratio,
                 market_info=market_info,
                 current_price=current_price
+            )
+            
+            logger.info(
+                f"Position calculation: available_balance={available_balance}, "
+                f"quote_amount_calc={available_balance * reference_position_ratio * self.config.scaling_factor}, "
+                f"position_size={position_size}"
             )
             
             if position_size is None:
@@ -321,8 +353,15 @@ class TradingService:
     ) -> Dict:
         """Execute a close trade (close entire position)."""
         try:
+            # Extract account data from response structure
+            accounts = account_info.get('accounts', [])
+            if not accounts or len(accounts) == 0:
+                return {"success": False, "error": "No account data found in response"}
+            
+            account_data = accounts[0]
+            
             # Find position for this market
-            positions = account_info.get('positions', [])
+            positions = account_data.get('positions', [])
             position = None
             for pos in positions:
                 if pos.get('market_id') == market_id:
@@ -420,8 +459,16 @@ class TradingService:
     ):
         """Update stop loss for the position."""
         try:
+            # Extract account data from response structure
+            accounts = account_info.get('accounts', [])
+            if not accounts or len(accounts) == 0:
+                logger.warning("No account data found for stop loss update")
+                return
+            
+            account_data = accounts[0]
+            
             # Find position for this market
-            positions = account_info.get('positions', [])
+            positions = account_data.get('positions', [])
             position = None
             for pos in positions:
                 if pos.get('market_id') == market_id:
