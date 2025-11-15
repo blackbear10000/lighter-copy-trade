@@ -4,7 +4,7 @@ Trading service that orchestrates the trade execution flow.
 
 import lighter
 import asyncio
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from decimal import Decimal
 
 from src.config import get_config, AccountConfig
@@ -55,6 +55,90 @@ class TradingService:
         except Exception as e:
             logger.error(f"Error getting account info: {e}", exc_info=True)
             return None
+    
+    async def get_stop_loss_orders(
+        self,
+        account_index: int,
+        account: AccountConfig,
+        market_ids: List[int]
+    ) -> List[Dict]:
+        """
+        Get stop loss orders for the account across specified markets.
+        
+        Args:
+            account_index: Account index
+            account: Account configuration
+            market_ids: List of market IDs to query
+            
+        Returns:
+            List of stop loss order dictionaries
+        """
+        stop_loss_orders = []
+        
+        try:
+            # Create signer client for authentication
+            signer_client = await self.order_service.create_signer_client(account)
+            
+            try:
+                api_client = lighter.ApiClient(
+                    configuration=lighter.Configuration(host=self.config.base_url)
+                )
+                order_api = lighter.OrderApi(api_client)
+                
+                # Query active orders for each market
+                for market_id in market_ids:
+                    try:
+                        # Generate auth token using signer client
+                        auth_token = await signer_client.get_auth_token()
+                        
+                        # Get active orders for this market
+                        orders_response = await order_api.account_active_orders(
+                            account_index=account_index,
+                            market_id=market_id,
+                            auth=auth_token
+                        )
+                        
+                        if hasattr(orders_response, 'to_dict'):
+                            orders_dict = orders_response.to_dict()
+                        else:
+                            orders_dict = orders_response
+                        
+                        orders = orders_dict.get('orders', []) if isinstance(orders_dict, dict) else []
+                        
+                        # Filter stop loss orders
+                        for order in orders:
+                            order_type = order.get('type', '')
+                            if order_type in ['stop-loss', 'stop-loss-limit']:
+                                # Get market symbol
+                                market_info = await self.market_service.get_market_info(market_id)
+                                symbol = market_info.get('symbol', f'ID{market_id}') if market_info else f'ID{market_id}'
+                                
+                                stop_loss_orders.append({
+                                    'order_index': order.get('order_index', 0),
+                                    'order_id': order.get('order_id', ''),
+                                    'market_id': market_id,
+                                    'symbol': symbol,
+                                    'trigger_price': str(order.get('trigger_price', '0')),
+                                    'price': str(order.get('price', '0')) if order.get('price') else None,
+                                    'base_amount': str(order.get('initial_base_amount', '0')),
+                                    'remaining_base_amount': str(order.get('remaining_base_amount', '0')),
+                                    'order_type': order_type,
+                                    'status': order.get('status', 'unknown'),
+                                    'reduce_only': order.get('reduce_only', False),
+                                })
+                    except Exception as e:
+                        logger.warning(f"Error querying orders for market {market_id}: {e}")
+                        continue
+                
+                await api_client.close()
+                
+            finally:
+                await signer_client.close()
+                
+        except Exception as e:
+            logger.error(f"Error getting stop loss orders: {e}", exc_info=True)
+        
+        return stop_loss_orders
     
     async def get_current_price(self, market_id: int) -> Optional[float]:
         """Get current market price from order book."""

@@ -57,6 +57,21 @@ class PositionInfo(BaseModel):
     sign: int  # 1 for long, -1 for short
 
 
+class StopLossOrderInfo(BaseModel):
+    """Stop loss order information model."""
+    order_index: int
+    order_id: str
+    market_id: int
+    symbol: str
+    trigger_price: str
+    price: Optional[str] = None  # For stop-loss-limit orders
+    base_amount: str
+    remaining_base_amount: str
+    order_type: str  # 'stop-loss' or 'stop-loss-limit'
+    status: str
+    reduce_only: bool
+
+
 class AccountInfoResponse(BaseModel):
     """Account information response model."""
     account_index: int
@@ -66,5 +81,6 @@ class AccountInfoResponse(BaseModel):
     total_asset_value: str
     cross_asset_value: str
     positions: List[PositionInfo]
+    stop_loss_orders: List[StopLossOrderInfo]
     status: int  # 0 = inactive, 1 = active
 

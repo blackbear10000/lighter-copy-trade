@@ -124,6 +124,21 @@ Get account information including balance, positions, and PnL.
       "realized_pnl": "0.000000",
       "sign": 1
     }
+  ],
+  "stop_loss_orders": [
+    {
+      "order_index": 12345,
+      "order_id": "0xabc123...",
+      "market_id": 51,
+      "symbol": "RESOLV",
+      "trigger_price": "0.135992",
+      "price": null,
+      "base_amount": "80",
+      "remaining_base_amount": "80",
+      "order_type": "stop-loss",
+      "status": "active",
+      "reduce_only": true
+    }
   ]
 }
 ```
@@ -145,6 +160,18 @@ Get account information including balance, positions, and PnL.
   - `unrealized_pnl`: Unrealized profit/loss
   - `realized_pnl`: Realized profit/loss
   - `sign`: Position direction (1 = long, -1 = short)
+- `stop_loss_orders`: Array of stop loss order information
+  - `order_index`: Order index
+  - `order_id`: Order ID
+  - `market_id`: Market ID
+  - `symbol`: Trading symbol
+  - `trigger_price`: Stop loss trigger price
+  - `price`: Limit price (for stop-loss-limit orders, null for stop-loss orders)
+  - `base_amount`: Initial base amount
+  - `remaining_base_amount`: Remaining base amount
+  - `order_type`: Order type ('stop-loss' or 'stop-loss-limit')
+  - `status`: Order status
+  - `reduce_only`: Whether the order is reduce-only
 
 **Error Responses:**
 - `404`: Account not found in configuration

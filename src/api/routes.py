@@ -5,7 +5,7 @@ API routes for the trading system.
 from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import Dict
 
-from src.models.schemas import TradeRequest, TradeResponse, ErrorResponse, AccountInfoResponse, PositionInfo
+from src.models.schemas import TradeRequest, TradeResponse, ErrorResponse, AccountInfoResponse, PositionInfo, StopLossOrderInfo
 from src.api.auth import verify_api_key
 from src.services.trading_service import get_trading_service
 from src.monitoring.health_check import get_health_monitor
@@ -137,9 +137,13 @@ async def get_account_info(
     # Format positions
     positions_data = account_data.get('positions', [])
     positions = []
+    market_ids = set()  # Collect market IDs for stop loss order query
     for pos in positions_data:
+        market_id = pos.get('market_id', 0)
+        if market_id:
+            market_ids.add(market_id)
         positions.append(PositionInfo(
-            market_id=pos.get('market_id', 0),
+            market_id=market_id,
             symbol=pos.get('symbol', 'N/A'),
             position=str(pos.get('position', '0')),
             position_value=str(pos.get('position_value', '0')),
@@ -147,6 +151,32 @@ async def get_account_info(
             unrealized_pnl=str(pos.get('unrealized_pnl', '0')),
             realized_pnl=str(pos.get('realized_pnl', '0')),
             sign=pos.get('sign', 0),
+        ))
+    
+    # Get stop loss orders for markets with positions
+    stop_loss_orders_data = []
+    if market_ids:
+        stop_loss_orders_data = await trading_service.get_stop_loss_orders(
+            account_index=account_index,
+            account=account,
+            market_ids=list(market_ids)
+        )
+    
+    # Format stop loss orders
+    stop_loss_orders = []
+    for sl_order in stop_loss_orders_data:
+        stop_loss_orders.append(StopLossOrderInfo(
+            order_index=sl_order.get('order_index', 0),
+            order_id=sl_order.get('order_id', ''),
+            market_id=sl_order.get('market_id', 0),
+            symbol=sl_order.get('symbol', 'N/A'),
+            trigger_price=sl_order.get('trigger_price', '0'),
+            price=sl_order.get('price'),
+            base_amount=sl_order.get('base_amount', '0'),
+            remaining_base_amount=sl_order.get('remaining_base_amount', '0'),
+            order_type=sl_order.get('order_type', 'stop-loss'),
+            status=sl_order.get('status', 'unknown'),
+            reduce_only=sl_order.get('reduce_only', False),
         ))
     
     return AccountInfoResponse(
@@ -157,6 +187,7 @@ async def get_account_info(
         total_asset_value=str(account_data.get('total_asset_value', '0')),
         cross_asset_value=str(account_data.get('cross_asset_value', '0')),
         positions=positions,
+        stop_loss_orders=stop_loss_orders,
         status=account_data.get('status', 0),
     )
 
