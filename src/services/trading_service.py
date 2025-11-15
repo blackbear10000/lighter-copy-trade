@@ -655,12 +655,18 @@ class TradingService:
                 market_id
             )
             
-            for order_index in existing_orders:
-                await self.order_service.cancel_order(
-                    signer_client,
-                    market_id,
-                    order_index
-                )
+            if existing_orders:
+                logger.info(f"Cancelling {len(existing_orders)} existing stop loss orders for market {market_id}")
+                for order_index in existing_orders:
+                    cancel_result, tx_hash, error = await self.order_service.cancel_order(
+                        signer_client,
+                        market_id,
+                        order_index
+                    )
+                    if error:
+                        logger.warning(f"Failed to cancel stop loss order {order_index}: {error}")
+                    else:
+                        logger.info(f"Cancelled stop loss order {order_index}: tx_hash={tx_hash}")
             
             # Calculate stop loss price
             stop_loss_price_int = await self.calculate_stop_loss_price(

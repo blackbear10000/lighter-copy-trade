@@ -120,9 +120,6 @@ class OrderService:
         """
         Get existing stop loss orders for a market.
         
-        Note: This is a placeholder. You may need to query orders through the API
-        to find existing stop loss orders.
-        
         Args:
             signer_client: Signer client instance
             market_id: Market ID
@@ -130,9 +127,66 @@ class OrderService:
         Returns:
             List of order indices to cancel
         """
-        # TODO: Implement actual query for stop loss orders
-        # This would require querying account orders and filtering for stop loss type
-        return []
+        order_indices = []
+        
+        try:
+            # Generate auth token
+            auth_token, error = signer_client.create_auth_token_with_expiry()
+            if error:
+                logger.warning(f"Error creating auth token for querying orders: {error}")
+                return []
+            
+            # Create API client
+            api_client = lighter.ApiClient(
+                configuration=lighter.Configuration(host=self.config.base_url)
+            )
+            order_api = lighter.OrderApi(api_client)
+            
+            try:
+                # Get active orders for this market
+                orders_response = await order_api.account_active_orders(
+                    account_index=signer_client.account_index,
+                    market_id=market_id,
+                    auth=auth_token
+                )
+                
+                # Convert response to dict
+                if hasattr(orders_response, 'to_dict'):
+                    orders_dict = orders_response.to_dict()
+                else:
+                    orders_dict = orders_response
+                
+                # Extract orders list
+                orders = []
+                if isinstance(orders_dict, dict):
+                    orders = orders_dict.get('orders', [])
+                elif hasattr(orders_response, 'orders'):
+                    orders_list = orders_response.orders
+                    if orders_list:
+                        orders = [order.to_dict() if hasattr(order, 'to_dict') else order for order in orders_list]
+                
+                # Filter stop loss orders and collect order indices
+                for order in orders:
+                    if hasattr(order, 'to_dict'):
+                        order_dict = order.to_dict()
+                    else:
+                        order_dict = order
+                    
+                    order_type = order_dict.get('type', '')
+                    if order_type in ['stop-loss', 'stop-loss-limit']:
+                        order_index = order_dict.get('order_index')
+                        if order_index:
+                            order_indices.append(order_index)
+                
+                logger.info(f"Found {len(order_indices)} existing stop loss orders for market {market_id}")
+                
+            finally:
+                await api_client.close()
+                
+        except Exception as e:
+            logger.error(f"Error getting existing stop loss orders: {e}", exc_info=True)
+        
+        return order_indices
     
     async def create_stop_loss_order(
         self,
