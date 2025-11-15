@@ -204,8 +204,32 @@ class TradingService:
             )
             
             if position_size is None:
+                error_msg = "Position size below minimum requirements"
                 logger.warning(f"Position size below minimum, skipping trade")
-                return {"success": False, "error": "Position size below minimum requirements"}
+                
+                # Send Telegram notification for insufficient size
+                await self.telegram_service.notify_error(
+                    "Insufficient Position Size",
+                    error_msg,
+                    {
+                        "request_id": request_id,
+                        "account_index": account_index,
+                        "market_id": resolved_market_id,
+                        "symbol": resolved_symbol,
+                        "trade_type": trade_type,
+                        "reference_position_ratio": reference_position_ratio,
+                        "available_balance": available_balance,
+                        "min_base_amount": market_info.get('min_base_amount'),
+                        "min_quote_amount": market_info.get('min_quote_amount'),
+                    }
+                )
+                
+                # Return with no_retry flag to skip retry mechanism
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "no_retry": True  # Flag to indicate this error should not be retried
+                }
             
             # Determine order direction
             is_long = trade_type == "long"
@@ -482,6 +506,11 @@ class TradingService:
                 result = await self.execute_trade(request_data)
                 
                 if result.get("success"):
+                    return result
+                
+                # Check if this error should not be retried (e.g., insufficient size)
+                if result.get("no_retry", False):
+                    logger.info("Error marked as no-retry, skipping retry mechanism")
                     return result
                 
                 # If not last attempt, wait and retry
