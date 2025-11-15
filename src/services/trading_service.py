@@ -293,6 +293,9 @@ class TradingService:
                 if error:
                     raise Exception(f"Order execution failed: {error}")
                 
+                # Wait a bit for the order to be processed and account info to update
+                await asyncio.sleep(3)
+                
                 # Get updated account info for position data
                 updated_account_info = await self.get_account_info(account_index)
                 
@@ -360,7 +363,7 @@ class TradingService:
             
             account_data = accounts[0]
             
-            # Find position for this market
+            # Find position for this market (before closing)
             positions = account_data.get('positions', [])
             position = None
             for pos in positions:
@@ -374,6 +377,11 @@ class TradingService:
             position_size = float(position.get('position', 0))
             if position_size == 0:
                 return {"success": False, "error": "Position size is zero"}
+            
+            # Store PnL information before closing
+            unrealized_pnl_before = float(position.get('unrealized_pnl', 0))
+            realized_pnl_before = float(position.get('realized_pnl', 0))
+            avg_entry_price = float(position.get('avg_entry_price', 0))
             
             # Get market info for precision
             market_info = await self.market_service.get_market_info(market_id)
@@ -416,8 +424,45 @@ class TradingService:
                 if error:
                     raise Exception(f"Close order execution failed: {error}")
                 
-                # Get updated account info
+                # Wait a bit for the order to be processed
+                await asyncio.sleep(1)
+                
+                # Get updated account info to check final PnL
                 updated_account_info = await self.get_account_info(account.index)
+                
+                # Calculate PnL: use updated account info if available, otherwise use before values
+                accounts_updated = updated_account_info.get('accounts', []) if updated_account_info else []
+                unrealized_pnl = unrealized_pnl_before
+                realized_pnl = realized_pnl_before
+                
+                if accounts_updated and len(accounts_updated) > 0:
+                    # Try to find the position in updated info to get final PnL
+                    updated_positions = accounts_updated[0].get('positions', [])
+                    for pos in updated_positions:
+                        if pos.get('market_id') == market_id:
+                            # Position still exists, use its PnL
+                            unrealized_pnl = float(pos.get('unrealized_pnl', unrealized_pnl_before))
+                            realized_pnl = float(pos.get('realized_pnl', realized_pnl_before))
+                            break
+                    else:
+                        # Position closed, calculate realized PnL from price difference
+                        # Realized PnL = (close_price - entry_price) * position_size * sign
+                        if avg_entry_price > 0:
+                            price_diff = current_price - avg_entry_price
+                            sign = 1 if position_size > 0 else -1
+                            realized_pnl = price_diff * abs(position_size) * sign
+                            unrealized_pnl = 0  # Position closed, no unrealized PnL
+                
+                # Create position info dict for notification
+                position_info_for_notification = {
+                    'accounts': [{
+                        'positions': [{
+                            'market_id': market_id,
+                            'unrealized_pnl': str(unrealized_pnl),
+                            'realized_pnl': str(realized_pnl),
+                        }]
+                    }]
+                }
                 
                 # Send notification
                 await self.telegram_service.notify_order_closing(
@@ -427,7 +472,7 @@ class TradingService:
                     base_amount=abs(position_size),
                     quote_amount=abs(position_size) * current_price,
                     price=current_price,
-                    position_info=updated_account_info
+                    position_info=position_info_for_notification
                 )
                 
                 logger.info(f"Position closed successfully: market_id={market_id}, tx_hash={tx_hash}")
