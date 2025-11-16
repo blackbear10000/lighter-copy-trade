@@ -494,6 +494,20 @@ class TradingService:
             is_long = trade_type == "long"
             is_ask = not is_long  # is_ask=True means sell (short), is_ask=False means buy (long)
             
+            # Check current position direction before executing trade
+            # This is to determine if we should update stop loss after the trade
+            current_position_direction = None
+            accounts = account_info.get('accounts', [])
+            if accounts and len(accounts) > 0:
+                positions = accounts[0].get('positions', [])
+                for pos in positions:
+                    if pos.get('market_id') == resolved_market_id:
+                        position_size_before = float(pos.get('position', 0))
+                        if position_size_before != 0:
+                            # sign: 1 for long, -1 for short
+                            current_position_direction = pos.get('sign', 1)
+                        break
+            
             # Convert amounts to integer format
             price_decimals = market_info.get('supported_price_decimals', 6)
             size_decimals = market_info.get('supported_size_decimals', 0)
@@ -538,8 +552,33 @@ class TradingService:
                     position_info=updated_account_info
                 )
                 
-                # Update stop loss for new position
+                # Update stop loss only if:
+                # 1. This is an opening trade (no existing position), OR
+                # 2. This is an adding trade (same direction as existing position)
+                # Do NOT update stop loss if this is a reducing/closing trade (opposite direction)
+                should_update_stop_loss = False
                 if trade_type in ["long", "short"]:
+                    if current_position_direction is None:
+                        # No existing position, this is an opening trade - update stop loss
+                        should_update_stop_loss = True
+                        logger.info(f"Opening new {trade_type} position, will update stop loss")
+                    else:
+                        # Check if trade direction matches current position direction
+                        # sign: 1 for long, -1 for short
+                        trade_sign = 1 if is_long else -1
+                        if trade_sign == current_position_direction:
+                            # Same direction - this is an adding trade - update stop loss
+                            should_update_stop_loss = True
+                            logger.info(f"Adding to existing {trade_type} position, will update stop loss")
+                        else:
+                            # Opposite direction - this is a reducing/closing trade - do NOT update stop loss
+                            should_update_stop_loss = False
+                            logger.info(
+                                f"Reducing/closing position (existing: {current_position_direction}, "
+                                f"trade: {trade_sign}), will NOT update stop loss"
+                            )
+                
+                if should_update_stop_loss:
                     await self._update_stop_loss(
                         signer_client,
                         resolved_market_id,
