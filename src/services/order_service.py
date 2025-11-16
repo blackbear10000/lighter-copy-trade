@@ -194,17 +194,27 @@ class OrderService:
         market_id: int,
         base_amount: int,
         stop_loss_price: int,
-        is_long: bool
+        is_long: bool,
+        price_decimals: int
     ) -> Tuple[Optional[Dict], Optional[str], Optional[str]]:
         """
-        Create a stop loss order.
+        Create a stop-loss-limit order with slippage tolerance.
+        
+        Uses stop-loss-limit order type (GOOD_TILL_TIME) instead of stop-loss (IMMEDIATE_OR_CANCEL)
+        for better reliability. When triggered, if price deviates beyond the limit price,
+        the order will wait for price to return to acceptable range instead of being canceled.
+        
+        This is more reliable for stop loss protection because:
+        - stop-loss orders cancel immediately if slippage is too high
+        - stop-loss-limit orders persist and execute when price returns to limit range
         
         Args:
             signer_client: Signer client instance
             market_id: Market ID
             base_amount: Base amount (in integer format with precision)
-            stop_loss_price: Stop loss price (in integer format with precision)
+            stop_loss_price: Stop loss trigger price (in integer format with precision)
             is_long: True for long position, False for short
+            price_decimals: Price precision decimals
             
         Returns:
             Tuple of (order, tx_hash, error)
@@ -220,13 +230,36 @@ class OrderService:
             # For short positions, stop loss is a buy order (is_ask=False)
             is_ask = is_long
             
-            # Create stop loss order
-            order, tx_hash, error = await signer_client.create_sl_order(
+            # Calculate execution price with slippage tolerance
+            # For long positions (selling): allow price to go lower (trigger_price * (1 - max_slippage))
+            # For short positions (buying): allow price to go higher (trigger_price * (1 + max_slippage))
+            # This allows the order to execute even if there's some slippage when triggered
+            max_slippage = self.config.max_slippage
+            
+            if is_long:
+                # Long position: selling, allow lower price
+                execution_price_float = (stop_loss_price / (10 ** price_decimals)) * (1 - max_slippage)
+            else:
+                # Short position: buying, allow higher price
+                execution_price_float = (stop_loss_price / (10 ** price_decimals)) * (1 + max_slippage)
+            
+            execution_price = int(execution_price_float * (10 ** price_decimals))
+            
+            logger.debug(
+                f"Stop loss order: trigger_price={stop_loss_price}, execution_price={execution_price}, "
+                f"max_slippage={max_slippage}, is_long={is_long}"
+            )
+            
+            # Use stop-loss-limit order instead of stop-loss order for better reliability
+            # stop-loss-limit uses GOOD_TILL_TIME, so if price deviates when triggered,
+            # the order will wait for price to return to acceptable range instead of being canceled
+            # This is more reliable for stop loss protection
+            order, tx_hash, error = await signer_client.create_sl_limit_order(
                 market_index=market_id,
                 client_order_index=client_order_index,
                 base_amount=base_amount,
                 trigger_price=stop_loss_price,
-                price=stop_loss_price,
+                price=execution_price,
                 is_ask=is_ask,
                 reduce_only=True,
             )
@@ -235,7 +268,11 @@ class OrderService:
                 logger.error(f"Stop loss order error: {error}")
                 return None, None, error
             
-            logger.info(f"Stop loss order created: tx_hash={tx_hash}")
+            logger.info(
+                f"Stop loss limit order created: tx_hash={tx_hash}, trigger_price={stop_loss_price}, "
+                f"limit_price={execution_price}, slippage_tolerance={max_slippage*100:.2f}%, "
+                f"order_type=stop-loss-limit (more reliable than stop-loss)"
+            )
             return order, tx_hash, None
             
         except Exception as e:

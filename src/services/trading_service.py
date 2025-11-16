@@ -809,13 +809,14 @@ class TradingService:
                 size_decimals
             )
             
-            # Create new stop loss order
+            # Create new stop loss order with slippage tolerance
             await self.order_service.create_stop_loss_order(
                 signer_client=signer_client,
                 market_id=market_id,
                 base_amount=base_amount_int,
                 stop_loss_price=stop_loss_price_int,
-                is_long=is_long
+                is_long=is_long,
+                price_decimals=price_decimals
             )
             
             logger.info(f"Stop loss updated for market {market_id}")
