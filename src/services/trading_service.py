@@ -238,55 +238,35 @@ class TradingService:
         Returns:
             Stop loss price in integer format
         """
-        # Calculate actual margin invested
-        # For isolated margin: use allocated_margin
-        # For cross margin: calculate from position_value and initial_margin_fraction
-        if allocated_margin > 0:
-            # Isolated margin mode: use allocated margin
-            margin = allocated_margin
-        else:
-            # Cross margin mode: calculate margin from position_value and margin fraction
-            # initial_margin_fraction is a percentage (e.g., 33.33 means 33.33%)
-            margin_fraction = initial_margin_fraction / 100.0 if initial_margin_fraction > 0 else 0.3333
-            margin = position_value * margin_fraction
+        # Calculate stop loss price using formula: avg_entry_price * (1 - initial_margin_fraction * STOP_LOSS_RATIO)
+        # initial_margin_fraction is a percentage (e.g., 33.33 means 33.33%)
+        margin_fraction = initial_margin_fraction / 100.0 if initial_margin_fraction > 0 else 0.3333
         
-        if margin <= 0:
+        # Calculate stop loss ratio based on margin fraction
+        # For long: stop_loss_price = avg_entry_price * (1 - margin_fraction * stop_loss_ratio)
+        # For short: stop_loss_price = avg_entry_price * (1 + margin_fraction * stop_loss_ratio)
+        if is_long:
+            stop_loss_price = avg_entry_price * (1 - margin_fraction * self.config.stop_loss_ratio)
+        else:
+            stop_loss_price = avg_entry_price * (1 + margin_fraction * self.config.stop_loss_ratio)
+        
+        # Fallback validation: if calculated price is invalid, use simple ratio
+        if stop_loss_price <= 0:
             logger.warning(
-                f"Cannot calculate stop loss: margin={margin}, falling back to price-based calculation"
+                f"Invalid stop loss price calculated: {stop_loss_price}, "
+                f"using fallback calculation (margin_fraction={margin_fraction})"
             )
-            # Fallback to price-based calculation if margin is invalid
             if is_long:
                 stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
             else:
                 stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
-        else:
-            # Calculate margin loss amount
-            margin_loss = margin * self.config.stop_loss_ratio
-            
-            # Calculate price change needed to cause this margin loss
-            # For long: price decrease causes loss
-            # For short: price increase causes loss
-            if abs(position_size) > 0:
-                price_change = margin_loss / abs(position_size)
-                
-                if is_long:
-                    # Long position: price decreases cause loss
-                    stop_loss_price = avg_entry_price - price_change
-                else:
-                    # Short position: price increases cause loss
-                    stop_loss_price = avg_entry_price + price_change
-            else:
-                # Fallback if position_size is invalid
-                logger.warning(f"Invalid position_size={position_size}, using price-based calculation")
-                if is_long:
-                    stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
-                else:
-                    stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
         
         logger.debug(
-            f"Stop loss calculation: margin={margin:.6f}, margin_loss={margin * self.config.stop_loss_ratio:.6f}, "
-            f"price_change={abs(stop_loss_price - avg_entry_price):.6f}, "
-            f"stop_loss_price={stop_loss_price:.6f}, entry_price={avg_entry_price:.6f}"
+            f"Stop loss calculation: avg_entry_price={avg_entry_price:.6f}, "
+            f"initial_margin_fraction={initial_margin_fraction:.2f}%, "
+            f"margin_fraction={margin_fraction:.4f}, "
+            f"stop_loss_ratio={self.config.stop_loss_ratio:.4f}, "
+            f"stop_loss_price={stop_loss_price:.6f}"
         )
         
         return self.convert_price_to_integer(stop_loss_price, price_decimals)
@@ -720,13 +700,20 @@ class TradingService:
                                 realized_pnl = realized_pnl_before + (unrealized_pnl_before - unrealized_pnl)
                             break
                 
-                # Create position info dict for notification
+                # Calculate the realized PnL from this close operation
+                # This is the PnL that was realized by closing this position
+                realized_pnl_from_close = realized_pnl - realized_pnl_before
+                
+                # Create position info dict for notification with detailed PnL info
                 position_info_for_notification = {
                     'accounts': [{
                         'positions': [{
                             'market_id': market_id,
                             'unrealized_pnl': str(unrealized_pnl),
                             'realized_pnl': str(realized_pnl),
+                            'realized_pnl_from_close': str(realized_pnl_from_close),
+                            'realized_pnl_before': str(realized_pnl_before),
+                            'unrealized_pnl_before': str(unrealized_pnl_before),
                         }]
                     }]
                 }
@@ -734,7 +721,8 @@ class TradingService:
                 logger.info(
                     f"Close PnL calculation: unrealized_before={unrealized_pnl_before}, "
                     f"realized_before={realized_pnl_before}, "
-                    f"final_realized={realized_pnl}, final_unrealized={unrealized_pnl}"
+                    f"final_realized={realized_pnl}, final_unrealized={unrealized_pnl}, "
+                    f"realized_from_close={realized_pnl_from_close}"
                 )
                 
                 # Send notification

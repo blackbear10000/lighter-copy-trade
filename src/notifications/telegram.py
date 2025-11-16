@@ -151,40 +151,36 @@ class TelegramService:
                             else:  # Short position
                                 pnl_pct = ((avg_entry_price - current_price) / avg_entry_price) * 100
                         
-                        # Calculate stop loss price based on actual margin
+                        # Calculate stop loss price using formula: avg_entry_price * (1 - initial_margin_fraction * STOP_LOSS_RATIO)
                         stop_loss_price = 0.0
                         stop_loss_str = "N/A"
-                        if avg_entry_price > 0 and abs(pos_size) > 0:
-                            # Get margin information
-                            allocated_margin = float(pos.get('allocated_margin', 0))
+                        if avg_entry_price > 0:
                             initial_margin_fraction = float(pos.get('initial_margin_fraction', 0))
+                            margin_fraction = initial_margin_fraction / 100.0 if initial_margin_fraction > 0 else 0.3333
                             
-                            # Calculate actual margin
-                            if allocated_margin > 0:
-                                margin = allocated_margin
-                            else:
-                                # Cross margin: calculate from position_value and margin fraction
-                                margin_fraction = initial_margin_fraction / 100.0 if initial_margin_fraction > 0 else 0.3333
-                                margin = pos_value * margin_fraction
+                            if sign == 1:  # Long position
+                                stop_loss_price = avg_entry_price * (1 - margin_fraction * self.config.stop_loss_ratio)
+                            else:  # Short position
+                                stop_loss_price = avg_entry_price * (1 + margin_fraction * self.config.stop_loss_ratio)
                             
-                            if margin > 0:
-                                # Calculate price change based on margin loss
-                                margin_loss = margin * self.config.stop_loss_ratio
-                                price_change = margin_loss / abs(pos_size)
-                                
-                                if sign == 1:  # Long position
-                                    stop_loss_price = avg_entry_price - price_change
-                                else:  # Short position
-                                    stop_loss_price = avg_entry_price + price_change
-                                
-                                stop_loss_str = f"${stop_loss_price:.6f}"
-                            else:
-                                # Fallback to price-based calculation
-                                if sign == 1:  # Long position
-                                    stop_loss_price = avg_entry_price * (1 - self.config.stop_loss_ratio)
-                                else:  # Short position
-                                    stop_loss_price = avg_entry_price * (1 + self.config.stop_loss_ratio)
-                                stop_loss_str = f"${stop_loss_price:.6f}"
+                            stop_loss_str = f"${stop_loss_price:.6f}"
+                        
+                        # Calculate leverage for this position
+                        leverage = 0.0
+                        leverage_str = "N/A"
+                        allocated_margin = float(pos.get('allocated_margin', 0))
+                        initial_margin_fraction = float(pos.get('initial_margin_fraction', 0))
+                        
+                        if allocated_margin > 0:
+                            # Isolated margin: leverage = position_value / allocated_margin
+                            leverage = pos_value / allocated_margin if allocated_margin > 0 else 0
+                        else:
+                            # Cross margin: leverage = 1 / margin_fraction
+                            margin_fraction = initial_margin_fraction / 100.0 if initial_margin_fraction > 0 else 0.3333
+                            leverage = 1.0 / margin_fraction if margin_fraction > 0 else 0
+                        
+                        if leverage > 0:
+                            leverage_str = f"{leverage:.2f}x"
                         
                         # Format position line with all information
                         pnl_sign = "+" if pnl >= 0 else ""
@@ -194,6 +190,7 @@ class TelegramService:
                             f"(Value: ${pos_value:.2f}, "
                             f"Entry: ${avg_entry_price:.6f}, "
                             f"PnL: {pnl_sign}${pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%), "
+                            f"Leverage: {leverage_str}, "
                             f"Stop Loss: {stop_loss_str})\n"
                         )
                     
@@ -271,14 +268,49 @@ class TelegramService:
             accounts = position_info.get('accounts', [])
             if accounts and len(accounts) > 0:
                 positions = accounts[0].get('positions', [])
+                position_found = False
+                
                 for pos in positions:
                     if pos.get('market_id') == market_id:
+                        position_found = True
                         unrealized_pnl = float(pos.get('unrealized_pnl', 0))
                         realized_pnl = float(pos.get('realized_pnl', 0))
+                        
+                        # Get PnL from this close operation if available
+                        realized_pnl_from_close = float(pos.get('realized_pnl_from_close', 0))
+                        if realized_pnl_from_close == 0:
+                            # Calculate from before/after if not provided
+                            realized_pnl_before = float(pos.get('realized_pnl_before', 0))
+                            realized_pnl_from_close = realized_pnl - realized_pnl_before
+                        
+                        # Calculate PnL details
+                        total_pnl = unrealized_pnl + realized_pnl
+                        pnl_sign = "+" if total_pnl >= 0 else ""
+                        unrealized_sign = "+" if unrealized_pnl >= 0 else ""
+                        realized_sign = "+" if realized_pnl >= 0 else ""
+                        close_sign = "+" if realized_pnl_from_close >= 0 else ""
+                        
                         message += f"\n*Profit/Loss:*\n"
-                        message += f"Unrealized PnL: ${unrealized_pnl:.2f}\n"
-                        message += f"Realized PnL: ${realized_pnl:.2f}\n"
+                        if realized_pnl_from_close != 0:
+                            message += f"PnL from this close: {close_sign}${realized_pnl_from_close:.2f}\n"
+                        message += f"Total Realized PnL: {realized_sign}${realized_pnl:.2f}\n"
+                        message += f"Unrealized PnL: {unrealized_sign}${unrealized_pnl:.2f}\n"
+                        message += f"Total PnL: {pnl_sign}${total_pnl:.2f}\n"
                         break
+                
+                # If position was fully closed, show realized PnL from close operation
+                if not position_found:
+                    # Try to get from the first position in the list (might be the closed one)
+                    if positions and len(positions) > 0:
+                        # Check if we have the closed position data in position_info
+                        for pos in positions:
+                            if 'realized_pnl_from_close' in pos:
+                                realized_pnl_from_close = float(pos.get('realized_pnl_from_close', 0))
+                                if realized_pnl_from_close != 0:
+                                    close_sign = "+" if realized_pnl_from_close >= 0 else ""
+                                    message += f"\n*Profit/Loss (Closed Position):*\n"
+                                    message += f"PnL from this close: {close_sign}${realized_pnl_from_close:.2f}\n"
+                                    break
         
         return message
     
