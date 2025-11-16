@@ -179,8 +179,12 @@ class TelegramService:
                             margin_fraction = initial_margin_fraction / 100.0 if initial_margin_fraction > 0 else 0.3333
                             leverage = 1.0 / margin_fraction if margin_fraction > 0 else 0
                         
+                        # Format leverage as "SYMBOL xN" format
                         if leverage > 0:
-                            leverage_str = f"{leverage:.2f}x"
+                            leverage_int = int(round(leverage))
+                            leverage_str = f"{pos_symbol} x{leverage_int}"
+                        else:
+                            leverage_str = "N/A"
                         
                         # Format position line with all information
                         pnl_sign = "+" if pnl >= 0 else ""
@@ -190,7 +194,7 @@ class TelegramService:
                             f"(Value: ${pos_value:.2f}, "
                             f"Entry: ${avg_entry_price:.6f}, "
                             f"PnL: {pnl_sign}${pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%), "
-                            f"Leverage: {leverage_str}, "
+                            f"{leverage_str}, "
                             f"Stop Loss: {stop_loss_str})\n"
                         )
                     
@@ -201,12 +205,11 @@ class TelegramService:
                     # Add account total assets and leverage
                     account_data = accounts[0]
                     total_asset_value = float(account_data.get('total_asset_value', '0'))
-                    collateral = float(account_data.get('collateral', '0'))
                     
-                    # Calculate leverage ratio
+                    # Calculate leverage ratio: Total Value (positions) / Account Total Assets
                     leverage_ratio = 0.0
-                    if collateral > 0:
-                        leverage_ratio = total_asset_value / collateral
+                    if total_asset_value > 0:
+                        leverage_ratio = total_value / total_asset_value
                     
                     message += f"*Account Total Assets:* ${total_asset_value:.2f}\n"
                     message += f"*Leverage Ratio:* {leverage_ratio:.2f}x\n"
@@ -216,11 +219,9 @@ class TelegramService:
                     # Even with no positions, show account info
                     account_data = accounts[0]
                     total_asset_value = float(account_data.get('total_asset_value', '0'))
-                    collateral = float(account_data.get('collateral', '0'))
                     
+                    # No positions, leverage ratio is 0
                     leverage_ratio = 0.0
-                    if collateral > 0:
-                        leverage_ratio = total_asset_value / collateral
                     
                     message += f"\n*Account Total Assets:* ${total_asset_value:.2f}\n"
                     message += f"*Leverage Ratio:* {leverage_ratio:.2f}x\n"
