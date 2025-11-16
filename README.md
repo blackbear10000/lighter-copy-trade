@@ -46,6 +46,7 @@ cp env.example .env
 - `RETRY_INTERVAL`: Retry interval in seconds (default: 5)
 - `TELEGRAM_BOT_API_KEY`: Telegram bot API key
 - `TELEGRAM_GROUP_ID`: Telegram group/chat ID
+- `TELEGRAM_THREAD_ID`: (Optional) Thread ID for forum groups. Leave empty if not using forum groups
 - `API_KEY`: Optional API key for authentication
 
 ## Usage

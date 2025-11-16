@@ -40,6 +40,7 @@ class TelegramService:
         self.config = get_config()
         self.base_url = f"https://api.telegram.org/bot{self.config.telegram_bot_api_key}"
         self.chat_id = self.config.telegram_group_id
+        self.thread_id = self.config.telegram_thread_id
     
     async def send_message(self, text: str, parse_mode: str = "Markdown") -> bool:
         """
@@ -59,6 +60,10 @@ class TelegramService:
                 "text": text,
                 "parse_mode": parse_mode,
             }
+            
+            # Add message_thread_id if configured (for forum groups)
+            if self.thread_id is not None:
+                payload["message_thread_id"] = self.thread_id
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload) as response:

@@ -28,6 +28,7 @@ class AppConfig(BaseModel):
     retry_interval: int = Field(default=5, ge=1)
     telegram_bot_api_key: str
     telegram_group_id: str
+    telegram_thread_id: Optional[int] = None  # Optional thread ID for forum groups
     api_key: Optional[str] = None  # API key for authentication
 
     @field_validator('accounts')
@@ -64,6 +65,8 @@ def load_config() -> AppConfig:
     # Load Telegram configuration
     telegram_bot_api_key = os.getenv("TELEGRAM_BOT_API_KEY", "")
     telegram_group_id = os.getenv("TELEGRAM_GROUP_ID", "")
+    telegram_thread_id_str = os.getenv("TELEGRAM_THREAD_ID", None)
+    telegram_thread_id = int(telegram_thread_id_str) if telegram_thread_id_str else None
     
     # Load API key for authentication
     api_key = os.getenv("API_KEY", None)
@@ -87,6 +90,7 @@ def load_config() -> AppConfig:
         retry_interval=retry_interval,
         telegram_bot_api_key=telegram_bot_api_key,
         telegram_group_id=telegram_group_id,
+        telegram_thread_id=telegram_thread_id,
         api_key=api_key,
     )
 
