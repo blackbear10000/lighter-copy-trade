@@ -42,8 +42,7 @@ class AdjustPositionRequest(BaseModel):
     percentage: float = Field(
         ...,
         gt=0.0,
-        le=1.0,
-        description="Portion of the current position to adjust, expressed as a decimal (e.g., 0.25 = 25%)"
+        description="Portion of the current position to adjust, expressed as a decimal (e.g., 0.25 = 25%, 1.5 = 150%)"
     )
 
     @model_validator(mode='after')

@@ -116,7 +116,7 @@ Adjust an existing position by increasing or decreasing it by a percentage.
 - `market_id` (integer, optional): Market ID of the position to adjust
 - `symbol` (string, optional): Trading symbol of the position to adjust
 - `adjustment_type` (string, required): `"increase"` to add to the position or `"decrease"` to reduce it
-- `percentage` (float, required, 0-1): Portion of the current position to adjust (e.g., 0.25 = 25%)
+- `percentage` (float, required, >0): Portion of the current position to adjust (e.g., 0.25 = 25%, 1.5 = 150%). No upper bound.
 
 Either `market_id` or `symbol` must be provided. The endpoint automatically determines the correct trade direction based on the current position. The same background queue, retry logic, and Telegram notifications apply.
 

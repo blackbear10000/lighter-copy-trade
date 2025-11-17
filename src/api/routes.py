@@ -189,9 +189,9 @@ async def adjust_position(
     reference_ratio = 0.0
     if total_asset_value > 0 and scaling_factor > 0:
         reference_ratio = target_quote_amount / (total_asset_value * scaling_factor)
-        reference_ratio = max(0.0, min(reference_ratio, 1.0))
+        reference_ratio = max(0.0, reference_ratio)
     else:
-        reference_ratio = min(request.percentage, 1.0)
+        reference_ratio = max(0.0, request.percentage)
     
     # Prepare queue payload with override amounts
     request_data = {
