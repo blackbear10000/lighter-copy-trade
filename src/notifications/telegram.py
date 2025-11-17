@@ -13,21 +13,28 @@ from src.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
-def escape_markdown(text: str) -> str:
+def escape_markdown(text: str, for_code_block: bool = False) -> str:
     """
     Escape special Markdown characters, but preserve numbers and common formatting.
     
     Args:
         text: Text to escape
+        for_code_block: If True, only escape backticks (for use inside code blocks)
         
     Returns:
         Escaped text
     """
     text = str(text)
-    # Only escape Markdown special characters that can cause parsing errors
-    # Don't escape: . (dots in numbers are fine), - (hyphens are fine), ( ) (parentheses are fine in most contexts)
-    # Escape: _, *, [, ], ~, `, >, #, +, =, |, {, }, !
-    special_chars = ['_', '*', '[', ']', '~', '`', '>', '#', '+', '=', '|', '{', '}', '!']
+    
+    if for_code_block:
+        # Inside code blocks, only backticks need escaping
+        return text.replace('`', '\\`')
+    
+    # For regular text, escape characters that can break Markdown parsing
+    # Don't escape: . (dots in numbers), - (hyphens), ( ) (parentheses), +, = (in formulas)
+    # Escape only: _, *, [, ], ~, `, >, #, |, {, }, !
+    # Note: We don't escape + and = as they're commonly used in formulas and numbers
+    special_chars = ['_', '*', '[', ']', '~', '`', '>', '#', '|', '{', '}', '!']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
     return text
@@ -111,8 +118,8 @@ class TelegramService:
         message = f"*📈 Order Opened*\n"
         message += f"━━━━━━━━━━━━━━━━━━━━\n"
         message += f"*Time:* `{timestamp}`\n"
-        message += f"*Account:* `{escape_markdown(str(account_index))}`\n"
-        message += f"*Market:* `{escape_markdown(symbol)}` (ID: `{market_id}`)\n"
+        message += f"*Account:* `{str(account_index)}`\n"
+        message += f"*Market:* `{escape_markdown(symbol, for_code_block=True)}` (ID: `{market_id}`)\n"
         message += f"*Type:* `{trade_type.upper()}`\n"
         message += f"*Amount:* `{base_amount:.6f}` {escape_markdown(symbol)}\n"
         message += f"*Value:* `${quote_amount:.2f}`\n"
@@ -129,7 +136,8 @@ class TelegramService:
                     total_pnl = 0.0
                     
                     for pos in positions:
-                        pos_symbol = escape_markdown(str(pos.get('symbol', 'N/A')))
+                        pos_symbol_raw = str(pos.get('symbol', 'N/A'))
+                        pos_symbol = escape_markdown(pos_symbol_raw)
                         pos_size = float(pos.get('position', '0'))
                         pos_value = float(pos.get('position_value', '0'))
                         pnl = float(pos.get('unrealized_pnl', '0'))
@@ -197,7 +205,7 @@ class TelegramService:
                         pnl_color = "🟢" if pnl >= 0 else "🔴"
                         
                         message += f"\n{direction_indicator} *{pos_symbol}*\n"
-                        message += f"  Size: `{abs(pos_size):.6f}` {pos_symbol}\n"
+                        message += f"  Size: `{abs(pos_size):.6f}` {pos_symbol_raw}\n"
                         message += f"  Value: `${pos_value:.2f}`\n"
                         message += f"  Entry: `${avg_entry_price:.6f}`\n"
                         message += f"  PnL: {pnl_color} {pnl_sign}${pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%)\n"
@@ -272,8 +280,8 @@ class TelegramService:
         message = f"*📉 Order Closed/Reduced*\n"
         message += f"━━━━━━━━━━━━━━━━━━━━\n"
         message += f"*Time:* `{timestamp}`\n"
-        message += f"*Account:* `{escape_markdown(str(account_index))}`\n"
-        message += f"*Market:* `{escape_markdown(symbol)}` (ID: `{market_id}`)\n"
+        message += f"*Account:* `{str(account_index)}`\n"
+        message += f"*Market:* `{escape_markdown(symbol, for_code_block=True)}` (ID: `{market_id}`)\n"
         message += f"*Amount:* `{base_amount:.6f}` {escape_markdown(symbol)}\n"
         message += f"*Value:* `${quote_amount:.2f}`\n"
         message += f"*Price:* `${price:.6f}`\n"
@@ -359,21 +367,21 @@ class TelegramService:
         message = f"*⚠️ Error Alert*\n"
         message += f"━━━━━━━━━━━━━━━━━━━━\n"
         message += f"*Time:* `{timestamp}`\n"
-        message += f"*Type:* `{escape_markdown(error_type)}`\n"
-        message += f"*Message:*\n`{escape_markdown(error_message)}`\n"
+        message += f"*Type:* `{escape_markdown(error_type, for_code_block=True)}`\n"
+        message += f"*Message:*\n`{escape_markdown(error_message, for_code_block=True)}`\n"
         
         if context:
             message += f"\n*📋 Context*\n"
             message += f"━━━━━━━━━━━━━━━━━━━━\n"
             for key, value in context.items():
-                # Escape values to prevent Markdown parsing errors
-                # Keys are usually safe, but escape them too to be safe
-                escaped_key = escape_markdown(str(key))
-                escaped_value = escape_markdown(str(value))
+                # For code blocks, only escape backticks
+                escaped_key = escape_markdown(str(key), for_code_block=True)
+                escaped_value = str(value)
                 # Truncate very long values for readability
-                if len(str(value)) > 100:
+                if len(escaped_value) > 100:
                     escaped_value = escaped_value[:97] + "..."
-                message += f"*{escaped_key}:* `{escaped_value}`\n"
+                escaped_value = escape_markdown(escaped_value, for_code_block=True)
+                message += f"*{escape_markdown(str(key))}:* `{escaped_value}`\n"
         
         return message
     
