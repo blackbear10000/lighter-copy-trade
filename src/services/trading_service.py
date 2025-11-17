@@ -441,15 +441,43 @@ class TradingService:
                 quote_amount = base_amount * current_price
                 insufficient_balance_flag = quote_amount > available_balance
                 
-                if quote_amount < min_quote_amount or base_amount < min_base_amount:
-                    error_msg = (
-                        f"Override adjustment size below minimum: base={base_amount:.6f} "
-                        f"(min={min_base_amount:.6f}), quote={quote_amount:.6f} (min={min_quote_amount:.6f})"
+                # Adjust to minimum if below minimum requirements
+                original_base = base_amount
+                original_quote = quote_amount
+                
+                if quote_amount < min_quote_amount:
+                    logger.info(
+                        f"Override quote amount below minimum: {quote_amount:.6f} < {min_quote_amount:.6f}. "
+                        f"Adjusting to minimum: {min_quote_amount:.6f}"
                     )
-                    logger.warning(f"Override position size below minimum, skipping trade: {error_msg}")
+                    quote_amount = min_quote_amount
+                    base_amount = quote_amount / current_price if current_price > 0 else base_amount
+                    base_amount = self.position_service.format_amount(base_amount, size_decimals)
+                
+                if base_amount < min_base_amount:
+                    logger.info(
+                        f"Override base amount below minimum: {base_amount:.6f} < {min_base_amount:.6f}. "
+                        f"Adjusting to minimum: {min_base_amount:.6f}"
+                    )
+                    base_amount = min_base_amount
+                    quote_amount = base_amount * current_price
+                    # Ensure quote also meets minimum
+                    if quote_amount < min_quote_amount:
+                        quote_amount = min_quote_amount
+                        base_amount = quote_amount / current_price if current_price > 0 else base_amount
+                        base_amount = self.position_service.format_amount(base_amount, size_decimals)
+                
+                # Notify if adjusted
+                if original_base != base_amount or original_quote != quote_amount:
+                    info_msg = (
+                        f"Override adjustment size below minimum. Adjusted to minimum: "
+                        f"base={base_amount:.6f} (was {original_base:.6f}, min={min_base_amount:.6f}), "
+                        f"quote={quote_amount:.6f} (was {original_quote:.6f}, min={min_quote_amount:.6f})"
+                    )
+                    logger.info(info_msg)
                     await self.telegram_service.notify_error(
-                        "Insufficient Position Size",
-                        error_msg,
+                        "Position Size Adjusted to Minimum",
+                        info_msg,
                         {
                             "request_id": request_id,
                             "account_index": account_index,
@@ -457,18 +485,14 @@ class TradingService:
                             "symbol": resolved_symbol,
                             "trade_type": trade_type,
                             "override_context": override_context,
-                            "calculated_quote_amount": quote_amount,
-                            "calculated_base_amount": base_amount,
+                            "original_base_amount": original_base,
+                            "original_quote_amount": original_quote,
+                            "adjusted_base_amount": base_amount,
+                            "adjusted_quote_amount": quote_amount,
                             "min_base_amount": min_base_amount,
                             "min_quote_amount": min_quote_amount,
-                            "current_price": current_price,
                         }
                     )
-                    return {
-                        "success": False,
-                        "error": error_msg,
-                        "no_retry": True
-                    }
                 
                 position_size = {
                     'base_amount': base_amount,
@@ -523,56 +547,56 @@ class TradingService:
                 )
             
             if position_size is None:
-                # Calculate what the quote_amount would have been to provide better error message
-                calculated_quote_amount = total_asset_value * reference_position_ratio * self.config.scaling_factor
-                
-                # Determine which requirement failed
-                if calculated_quote_amount < min_quote_amount:
-                    error_msg = (
-                        f"Calculated quote amount ({calculated_quote_amount:.6f}) is below minimum "
-                        f"({min_quote_amount:.6f}). Total assets ({total_asset_value:.6f}) * "
-                        f"ratio ({reference_position_ratio}) * scaling ({self.config.scaling_factor}) = "
-                        f"{calculated_quote_amount:.6f}"
-                    )
-                else:
-                    # Base amount would be the issue
-                    calculated_base_amount = calculated_quote_amount / current_price if current_price > 0 else 0
-                    error_msg = (
-                        f"Calculated base amount ({calculated_base_amount:.6f}) is below minimum "
-                        f"({min_base_amount:.6f}). Quote amount ({calculated_quote_amount:.6f}) is sufficient, "
-                        f"but base amount is too small at current price ({current_price:.6f})"
-                    )
-                
-                logger.warning(f"Position size below minimum, skipping trade: {error_msg}")
-                
-                # Send Telegram notification for insufficient size
+                # This should not happen anymore as calculate_position_size now adjusts to minimum
+                # But keep this as a safety check
+                error_msg = "Failed to calculate position size"
+                logger.error(error_msg)
                 await self.telegram_service.notify_error(
-                    "Insufficient Position Size",
+                    "Position Calculation Error",
                     error_msg,
                     {
                         "request_id": request_id,
                         "account_index": account_index,
                         "market_id": resolved_market_id,
                         "symbol": resolved_symbol,
-                        "trade_type": trade_type,
-                        "reference_position_ratio": reference_position_ratio,
-                        "total_assets": total_asset_value,
-                        "available_balance": available_balance,
-                        "calculated_quote_amount": calculated_quote_amount,
-                        "calculated_base_amount": calculated_quote_amount / current_price if current_price > 0 else 0,
-                        "min_base_amount": min_base_amount,
-                        "min_quote_amount": min_quote_amount,
-                        "current_price": current_price,
-                        "scaling_factor": self.config.scaling_factor,
                     }
                 )
-                
-                # Return with no_retry flag to skip retry mechanism
                 return {
                     "success": False,
                     "error": error_msg,
-                    "no_retry": True  # Flag to indicate this error should not be retried
+                    "no_retry": True
                 }
+            
+            # Check if position size was adjusted to minimum and send notification
+            if position_size.get('adjusted_to_minimum', False):
+                calculated_quote_amount = total_asset_value * reference_position_ratio * self.config.scaling_factor
+                calculated_base_amount = calculated_quote_amount / current_price if current_price > 0 else 0
+                actual_quote = position_size.get('quote_amount', 0)
+                actual_base = position_size.get('base_amount', 0)
+                
+                info_msg = (
+                    f"Calculated amount below minimum requirements. "
+                    f"Using minimum: base={actual_base:.6f} (calculated={calculated_base_amount:.6f}, min={min_base_amount:.6f}), "
+                    f"quote={actual_quote:.6f} (calculated={calculated_quote_amount:.6f}, min={min_quote_amount:.6f})"
+                )
+                logger.info(info_msg)
+                await self.telegram_service.notify_error(
+                    "Position Size Adjusted to Minimum",
+                    info_msg,
+                    {
+                        "request_id": request_id,
+                        "account_index": account_index,
+                        "market_id": resolved_market_id,
+                        "symbol": resolved_symbol,
+                        "trade_type": trade_type,
+                        "calculated_quote_amount": calculated_quote_amount,
+                        "calculated_base_amount": calculated_base_amount,
+                        "actual_quote_amount": actual_quote,
+                        "actual_base_amount": actual_base,
+                        "min_base_amount": min_base_amount,
+                        "min_quote_amount": min_quote_amount,
+                    }
+                )
             
             # Determine order direction
             is_long = trade_type == "long"

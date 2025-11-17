@@ -36,8 +36,8 @@ class PositionService:
             current_price: Current market price
             
         Returns:
-            Dictionary with 'base_amount', 'quote_amount', and 'insufficient_balance' flag,
-            or None if below minimum
+            Dictionary with 'base_amount', 'quote_amount', 'insufficient_balance' flag,
+            and 'adjusted_to_minimum' flag indicating if amounts were adjusted to meet minimum requirements
         """
         # Get minimum requirements
         min_base_amount = float(market_info.get('min_base_amount', 0))
@@ -65,14 +65,13 @@ class PositionService:
             )
         
         # First check: quote amount must meet minimum requirement
+        # If below minimum, use minimum amount instead
         if quote_amount < min_quote_amount:
-            logger.warning(
+            logger.info(
                 f"Quote amount below minimum: calculated={quote_amount:.6f} < min={min_quote_amount:.6f}. "
-                f"Required minimum quote amount: {min_quote_amount:.6f}, "
-                f"but calculated amount (balance={available_balance:.6f} * ratio={reference_position_ratio} * "
-                f"scaling={self.config.scaling_factor}) = {quote_amount:.6f}"
+                f"Using minimum quote amount: {min_quote_amount:.6f}"
             )
-            return None
+            quote_amount = min_quote_amount
         
         # Convert to base amount
         if current_price <= 0:
@@ -90,23 +89,38 @@ class PositionService:
             base_amount = float(Decimal(str(base_amount)).quantize(precision, rounding=ROUND_DOWN))
         
         # Second check: base amount must meet minimum requirement
+        # If below minimum, adjust quote amount to meet base minimum
         if base_amount < min_base_amount:
-            logger.warning(
+            logger.info(
                 f"Base amount below minimum: calculated={base_amount:.6f} < min={min_base_amount:.6f}. "
-                f"Quote amount={quote_amount:.6f} is sufficient, but base amount "
-                f"(quote={quote_amount:.6f} / price={current_price:.6f}) = {base_amount:.6f} is too small"
+                f"Adjusting to meet base minimum: {min_base_amount:.6f}"
             )
-            return None
+            base_amount = min_base_amount
+            # Recalculate quote amount based on minimum base amount
+            quote_amount = base_amount * current_price
+            # Ensure quote amount also meets minimum
+            if quote_amount < min_quote_amount:
+                quote_amount = min_quote_amount
+                # Recalculate base amount again
+                base_amount = quote_amount / current_price
+                if size_decimals >= 0:
+                    precision = Decimal(10) ** -size_decimals
+                    base_amount = float(Decimal(str(base_amount)).quantize(precision, rounding=ROUND_DOWN))
+        
+        # Check if we adjusted to minimum
+        original_calculated_quote = total_assets * reference_position_ratio * self.config.scaling_factor
+        adjusted_to_minimum = (quote_amount > original_calculated_quote) or (base_amount > (original_calculated_quote / current_price if current_price > 0 else 0))
         
         logger.debug(
             f"Position size calculated successfully: base={base_amount:.6f}, quote={quote_amount:.6f}, "
-            f"insufficient_balance={insufficient_balance}"
+            f"insufficient_balance={insufficient_balance}, adjusted_to_minimum={adjusted_to_minimum}"
         )
         
         return {
             'base_amount': base_amount,
             'quote_amount': quote_amount,
-            'insufficient_balance': insufficient_balance
+            'insufficient_balance': insufficient_balance,
+            'adjusted_to_minimum': adjusted_to_minimum
         }
     
     def format_amount(self, amount: float, decimals: int) -> float:
