@@ -108,17 +108,19 @@ class TelegramService:
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        message = f"*Order Opened*\n"
-        message += f"Time: {timestamp}\n"
-        message += f"Account: {escape_markdown(str(account_index))}\n"
-        message += f"Market: {escape_markdown(symbol)} (ID: {market_id})\n"
-        message += f"Type: {trade_type.upper()}\n"
-        message += f"Amount: {base_amount:.6f} {escape_markdown(symbol)}\n"
-        message += f"Value: ${quote_amount:.2f}\n"
-        message += f"Price: ${price:.6f}\n"
+        message = f"*📈 Order Opened*\n"
+        message += f"━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"*Time:* `{timestamp}`\n"
+        message += f"*Account:* `{escape_markdown(str(account_index))}`\n"
+        message += f"*Market:* `{escape_markdown(symbol)}` (ID: `{market_id}`)\n"
+        message += f"*Type:* `{trade_type.upper()}`\n"
+        message += f"*Amount:* `{base_amount:.6f}` {escape_markdown(symbol)}\n"
+        message += f"*Value:* `${quote_amount:.2f}`\n"
+        message += f"*Price:* `${price:.6f}`\n"
         
         if position_info:
-            message += f"\n*Current Positions:*\n"
+            message += f"\n*💼 Current Positions*\n"
+            message += f"━━━━━━━━━━━━━━━━━━━━\n"
             accounts = position_info.get('accounts', [])
             if accounts and len(accounts) > 0:
                 positions = accounts[0].get('positions', [])
@@ -186,21 +188,29 @@ class TelegramService:
                         else:
                             leverage_str = "N/A"
                         
-                        # Format position line with all information
+                        # Determine position direction indicator
+                        direction_indicator = "📈" if sign == 1 else "📉"
+                        
+                        # Format position line with better structure
                         pnl_sign = "+" if pnl >= 0 else ""
                         pnl_pct_sign = "+" if pnl_pct >= 0 else ""
-                        message += (
-                            f"- {pos_symbol}: {abs(pos_size):.6f} "
-                            f"(Value: ${pos_value:.2f}, "
-                            f"Entry: ${avg_entry_price:.6f}, "
-                            f"PnL: {pnl_sign}${pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%), "
-                            f"{leverage_str}, "
-                            f"Stop Loss: {stop_loss_str})\n"
-                        )
+                        pnl_color = "🟢" if pnl >= 0 else "🔴"
+                        
+                        message += f"\n{direction_indicator} *{pos_symbol}*\n"
+                        message += f"  Size: `{abs(pos_size):.6f}` {pos_symbol}\n"
+                        message += f"  Value: `${pos_value:.2f}`\n"
+                        message += f"  Entry: `${avg_entry_price:.6f}`\n"
+                        message += f"  PnL: {pnl_color} {pnl_sign}${pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%)\n"
+                        message += f"  Leverage: `{leverage_str}`\n"
+                        message += f"  Stop Loss: `{stop_loss_str}`\n"
                     
                     # Add total value and PnL summary
                     total_pnl_sign = "+" if total_pnl >= 0 else ""
-                    message += f"\n*Total Value:* ${total_value:.2f} (PnL: {total_pnl_sign}${total_pnl:.2f})\n"
+                    total_pnl_color = "🟢" if total_pnl >= 0 else "🔴"
+                    message += f"\n*📊 Summary*\n"
+                    message += f"━━━━━━━━━━━━━━━━━━━━\n"
+                    message += f"*Total Value:* `${total_value:.2f}`\n"
+                    message += f"*Total PnL:* {total_pnl_color} {total_pnl_sign}${total_pnl:.2f}\n"
                     
                     # Add account total assets and leverage
                     account_data = accounts[0]
@@ -211,10 +221,10 @@ class TelegramService:
                     if total_asset_value > 0:
                         leverage_ratio = total_value / total_asset_value
                     
-                    message += f"*Account Total Assets:* ${total_asset_value:.2f}\n"
-                    message += f"*Leverage Ratio:* {leverage_ratio:.2f}x\n"
+                    message += f"*Account Assets:* `${total_asset_value:.2f}`\n"
+                    message += f"*Leverage Ratio:* `{leverage_ratio:.2f}x`\n"
                 else:
-                    message += "No open positions\n"
+                    message += f"*No open positions*\n"
                     
                     # Even with no positions, show account info
                     account_data = accounts[0]
@@ -223,10 +233,12 @@ class TelegramService:
                     # No positions, leverage ratio is 0
                     leverage_ratio = 0.0
                     
-                    message += f"\n*Account Total Assets:* ${total_asset_value:.2f}\n"
-                    message += f"*Leverage Ratio:* {leverage_ratio:.2f}x\n"
+                    message += f"\n*📊 Account Summary*\n"
+                    message += f"━━━━━━━━━━━━━━━━━━━━\n"
+                    message += f"*Account Assets:* `${total_asset_value:.2f}`\n"
+                    message += f"*Leverage Ratio:* `{leverage_ratio:.2f}x`\n"
             else:
-                message += "No open positions\n"
+                message += f"*No open positions*\n"
         
         return message
     
@@ -257,13 +269,14 @@ class TelegramService:
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        message = f"*Order Closed/Reduced*\n"
-        message += f"Time: {timestamp}\n"
-        message += f"Account: {escape_markdown(str(account_index))}\n"
-        message += f"Market: {escape_markdown(symbol)} (ID: {market_id})\n"
-        message += f"Amount: {base_amount:.6f} {escape_markdown(symbol)}\n"
-        message += f"Value: ${quote_amount:.2f}\n"
-        message += f"Price: ${price:.6f}\n"
+        message = f"*📉 Order Closed/Reduced*\n"
+        message += f"━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"*Time:* `{timestamp}`\n"
+        message += f"*Account:* `{escape_markdown(str(account_index))}`\n"
+        message += f"*Market:* `{escape_markdown(symbol)}` (ID: `{market_id}`)\n"
+        message += f"*Amount:* `{base_amount:.6f}` {escape_markdown(symbol)}\n"
+        message += f"*Value:* `${quote_amount:.2f}`\n"
+        message += f"*Price:* `${price:.6f}`\n"
         
         if position_info:
             accounts = position_info.get('accounts', [])
@@ -291,12 +304,19 @@ class TelegramService:
                         realized_sign = "+" if realized_pnl >= 0 else ""
                         close_sign = "+" if realized_pnl_from_close >= 0 else ""
                         
-                        message += f"\n*Profit/Loss:*\n"
+                        # Color indicators
+                        total_color = "🟢" if total_pnl >= 0 else "🔴"
+                        close_color = "🟢" if realized_pnl_from_close >= 0 else "🔴"
+                        realized_color = "🟢" if realized_pnl >= 0 else "🔴"
+                        unrealized_color = "🟢" if unrealized_pnl >= 0 else "🔴"
+                        
+                        message += f"\n*💰 Profit/Loss*\n"
+                        message += f"━━━━━━━━━━━━━━━━━━━━\n"
                         if realized_pnl_from_close != 0:
-                            message += f"PnL from this close: {close_sign}${realized_pnl_from_close:.2f}\n"
-                        message += f"Total Realized PnL: {realized_sign}${realized_pnl:.2f}\n"
-                        message += f"Unrealized PnL: {unrealized_sign}${unrealized_pnl:.2f}\n"
-                        message += f"Total PnL: {pnl_sign}${total_pnl:.2f}\n"
+                            message += f"*This Close:* {close_color} {close_sign}${realized_pnl_from_close:.2f}\n"
+                        message += f"*Realized PnL:* {realized_color} {realized_sign}${realized_pnl:.2f}\n"
+                        message += f"*Unrealized PnL:* {unrealized_color} {unrealized_sign}${unrealized_pnl:.2f}\n"
+                        message += f"*Total PnL:* {total_color} {pnl_sign}${total_pnl:.2f}\n"
                         break
                 
                 # If position was fully closed, show realized PnL from close operation
@@ -309,8 +329,10 @@ class TelegramService:
                                 realized_pnl_from_close = float(pos.get('realized_pnl_from_close', 0))
                                 if realized_pnl_from_close != 0:
                                     close_sign = "+" if realized_pnl_from_close >= 0 else ""
-                                    message += f"\n*Profit/Loss (Closed Position):*\n"
-                                    message += f"PnL from this close: {close_sign}${realized_pnl_from_close:.2f}\n"
+                                    close_color = "🟢" if realized_pnl_from_close >= 0 else "🔴"
+                                    message += f"\n*💰 Profit/Loss (Closed Position)*\n"
+                                    message += f"━━━━━━━━━━━━━━━━━━━━\n"
+                                    message += f"*This Close:* {close_color} {close_sign}${realized_pnl_from_close:.2f}\n"
                                     break
         
         return message
@@ -334,19 +356,24 @@ class TelegramService:
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        message = f"*Error Alert*\n"
-        message += f"Time: {timestamp}\n"
-        message += f"Type: {error_type}\n"
-        message += f"Message: {error_message}\n"
+        message = f"*⚠️ Error Alert*\n"
+        message += f"━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"*Time:* `{timestamp}`\n"
+        message += f"*Type:* `{escape_markdown(error_type)}`\n"
+        message += f"*Message:*\n`{escape_markdown(error_message)}`\n"
         
         if context:
-            message += f"\n*Context:*\n"
+            message += f"\n*📋 Context*\n"
+            message += f"━━━━━━━━━━━━━━━━━━━━\n"
             for key, value in context.items():
                 # Escape values to prevent Markdown parsing errors
                 # Keys are usually safe, but escape them too to be safe
                 escaped_key = escape_markdown(str(key))
                 escaped_value = escape_markdown(str(value))
-                message += f"{escaped_key}: {escaped_value}\n"
+                # Truncate very long values for readability
+                if len(str(value)) > 100:
+                    escaped_value = escaped_value[:97] + "..."
+                message += f"*{escaped_key}:* `{escaped_value}`\n"
         
         return message
     
