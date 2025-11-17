@@ -2,7 +2,7 @@
 Pydantic models for API request/response validation.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -21,6 +21,30 @@ class TradeRequest(BaseModel):
         if v not in allowed:
             raise ValueError(f"trade_type must be one of {allowed}")
         return v
+
+    @model_validator(mode='after')
+    def validate_market_identifier(self):
+        """Ensure at least one of market_id or symbol is provided."""
+        if not self.market_id and not self.symbol:
+            raise ValueError("Either market_id or symbol must be provided")
+        return self
+
+
+class AdjustPositionRequest(BaseModel):
+    """Request model for percentage-based position adjustments."""
+    account_index: int = Field(..., description="Account index to operate on")
+    market_id: Optional[int] = Field(None, description="Market ID for the trading pair")
+    symbol: Optional[str] = Field(None, description="Trading pair symbol (e.g., ETH, BTC, RESOLV)")
+    adjustment_type: Literal["increase", "decrease"] = Field(
+        ...,
+        description="Whether to add to (increase) or reduce (decrease) the existing position"
+    )
+    percentage: float = Field(
+        ...,
+        gt=0.0,
+        le=1.0,
+        description="Portion of the current position to adjust, expressed as a decimal (e.g., 0.25 = 25%)"
+    )
 
     @model_validator(mode='after')
     def validate_market_identifier(self):

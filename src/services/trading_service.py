@@ -287,6 +287,10 @@ class TradingService:
         symbol = request_data.get('symbol')
         trade_type = request_data.get('trade_type')
         reference_position_ratio = request_data.get('reference_position_ratio')
+        override_base_amount = request_data.get('override_base_amount')
+        override_quote_amount = request_data.get('override_quote_amount')
+        override_context = request_data.get('override_context')
+        using_override_size = override_base_amount is not None or override_quote_amount is not None
         
         logger.info(f"Executing trade request {request_id}: account={account_index}, market_id={market_id}, symbol={symbol}, type={trade_type}")
         
@@ -346,6 +350,10 @@ class TradingService:
             account_data = accounts[0]
             available_balance = float(account_data.get('available_balance', 0))
             total_asset_value = float(account_data.get('total_asset_value', 0))
+            min_base_amount = float(market_info.get('min_base_amount', 0))
+            min_quote_amount = float(market_info.get('min_quote_amount', 0))
+            price_decimals = market_info.get('supported_price_decimals', 6)
+            size_decimals = market_info.get('supported_size_decimals', 0)
             
             logger.info(
                 f"Account balance info: total_assets={total_asset_value}, "
@@ -375,21 +383,119 @@ class TradingService:
                 f"symbol={resolved_symbol}"
             )
             
-            # Calculate position size based on total assets
-            position_size = self.position_service.calculate_position_size(
-                total_assets=total_asset_value,
-                available_balance=available_balance,
-                reference_position_ratio=reference_position_ratio,
-                market_info=market_info,
-                current_price=current_price
-            )
-            
-            logger.info(
-                f"Position calculation: total_assets={total_asset_value}, "
-                f"available_balance={available_balance}, "
-                f"quote_amount_calc={total_asset_value * reference_position_ratio * self.config.scaling_factor}, "
-                f"position_size={position_size}"
-            )
+            if using_override_size:
+                base_amount = float(override_base_amount) if override_base_amount is not None else 0.0
+                quote_amount = float(override_quote_amount) if override_quote_amount is not None else None
+                
+                if base_amount <= 0 and (quote_amount is None or quote_amount <= 0):
+                    error_msg = (
+                        "Override adjustment amount is invalid. Provide a positive base or quote amount."
+                    )
+                    await self.telegram_service.notify_error(
+                        "Adjustment Size Error",
+                        error_msg,
+                        {
+                            "request_id": request_id,
+                            "account_index": account_index,
+                            "market_id": resolved_market_id,
+                            "symbol": resolved_symbol,
+                            "override_context": override_context,
+                        }
+                    )
+                    return {"success": False, "error": error_msg, "no_retry": True}
+                
+                if base_amount <= 0:
+                    if quote_amount is None or current_price <= 0:
+                        error_msg = "Cannot derive base amount from quote for override adjustment"
+                        await self.telegram_service.notify_error(
+                            "Adjustment Size Error",
+                            error_msg,
+                            {
+                                "request_id": request_id,
+                                "account_index": account_index,
+                                "market_id": resolved_market_id,
+                                "symbol": resolved_symbol,
+                                "override_context": override_context,
+                            }
+                        )
+                        return {"success": False, "error": error_msg, "no_retry": True}
+                    base_amount = quote_amount / current_price
+                
+                base_amount = abs(base_amount)
+                base_amount = self.position_service.format_amount(base_amount, size_decimals)
+                if base_amount <= 0:
+                    error_msg = "Rounded adjustment amount is zero; increase percentage or position size."
+                    await self.telegram_service.notify_error(
+                        "Adjustment Size Error",
+                        error_msg,
+                        {
+                            "request_id": request_id,
+                            "account_index": account_index,
+                            "market_id": resolved_market_id,
+                            "symbol": resolved_symbol,
+                            "override_context": override_context,
+                        }
+                    )
+                    return {"success": False, "error": error_msg, "no_retry": True}
+                
+                quote_amount = base_amount * current_price
+                insufficient_balance_flag = quote_amount > available_balance
+                
+                if quote_amount < min_quote_amount or base_amount < min_base_amount:
+                    error_msg = (
+                        f"Override adjustment size below minimum: base={base_amount:.6f} "
+                        f"(min={min_base_amount:.6f}), quote={quote_amount:.6f} (min={min_quote_amount:.6f})"
+                    )
+                    logger.warning(f"Override position size below minimum, skipping trade: {error_msg}")
+                    await self.telegram_service.notify_error(
+                        "Insufficient Position Size",
+                        error_msg,
+                        {
+                            "request_id": request_id,
+                            "account_index": account_index,
+                            "market_id": resolved_market_id,
+                            "symbol": resolved_symbol,
+                            "trade_type": trade_type,
+                            "override_context": override_context,
+                            "calculated_quote_amount": quote_amount,
+                            "calculated_base_amount": base_amount,
+                            "min_base_amount": min_base_amount,
+                            "min_quote_amount": min_quote_amount,
+                            "current_price": current_price,
+                        }
+                    )
+                    return {
+                        "success": False,
+                        "error": error_msg,
+                        "no_retry": True
+                    }
+                
+                position_size = {
+                    'base_amount': base_amount,
+                    'quote_amount': quote_amount,
+                    'insufficient_balance': insufficient_balance_flag
+                }
+                
+                logger.info(
+                    f"Override position size applied: base={base_amount}, quote={quote_amount}, "
+                    f"insufficient_balance={insufficient_balance_flag}, context={override_context}"
+                )
+            else:
+                # Calculate position size based on total assets
+                position_size = self.position_service.calculate_position_size(
+                    total_assets=total_asset_value,
+                    available_balance=available_balance,
+                    reference_position_ratio=reference_position_ratio,
+                    market_info=market_info,
+                    current_price=current_price
+                )
+                
+                logger.info(
+                    f"Position calculation: total_assets={total_asset_value}, "
+                    f"available_balance={available_balance}, "
+                    f"quote_amount_calc={total_asset_value * reference_position_ratio * self.config.scaling_factor}, "
+                    f"position_size={position_size}"
+                )
             
             # Check if insufficient balance and send warning
             if position_size and position_size.get('insufficient_balance', False):
@@ -419,8 +525,6 @@ class TradingService:
             if position_size is None:
                 # Calculate what the quote_amount would have been to provide better error message
                 calculated_quote_amount = total_asset_value * reference_position_ratio * self.config.scaling_factor
-                min_base_amount = float(market_info.get('min_base_amount', 0))
-                min_quote_amount = float(market_info.get('min_quote_amount', 0))
                 
                 # Determine which requirement failed
                 if calculated_quote_amount < min_quote_amount:
@@ -489,9 +593,6 @@ class TradingService:
                         break
             
             # Convert amounts to integer format
-            price_decimals = market_info.get('supported_price_decimals', 6)
-            size_decimals = market_info.get('supported_size_decimals', 0)
-            
             base_amount_int = self.convert_base_amount_to_integer(
                 position_size['base_amount'],
                 size_decimals

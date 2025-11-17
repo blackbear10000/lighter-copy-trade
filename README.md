@@ -97,6 +97,38 @@ Or using symbol:
 }
 ```
 
+#### POST /api/trade/adjust
+
+Adjust an existing position by increasing or decreasing it by a percentage.
+
+**Request Body:**
+```json
+{
+  "account_index": 123,
+  "symbol": "RESOLV",
+  "adjustment_type": "decrease",
+  "percentage": 0.25
+}
+```
+
+**Parameters:**
+- `account_index` (integer, required): Account index to operate on
+- `market_id` (integer, optional): Market ID of the position to adjust
+- `symbol` (string, optional): Trading symbol of the position to adjust
+- `adjustment_type` (string, required): `"increase"` to add to the position or `"decrease"` to reduce it
+- `percentage` (float, required, 0-1): Portion of the current position to adjust (e.g., 0.25 = 25%)
+
+Either `market_id` or `symbol` must be provided. The endpoint automatically determines the correct trade direction based on the current position. The same background queue, retry logic, and Telegram notifications apply.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "adjustment request accepted, processing in background",
+  "request_id": "1234567890-abc123"
+}
+```
+
 #### GET /api/account/{account_index}
 
 Get account information including balance, positions, and PnL.

@@ -5,7 +5,15 @@ API routes for the trading system.
 from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import Dict
 
-from src.models.schemas import TradeRequest, TradeResponse, ErrorResponse, AccountInfoResponse, PositionInfo, StopLossOrderInfo
+from src.models.schemas import (
+    TradeRequest,
+    TradeResponse,
+    ErrorResponse,
+    AccountInfoResponse,
+    PositionInfo,
+    StopLossOrderInfo,
+    AdjustPositionRequest,
+)
 from src.api.auth import verify_api_key
 from src.services.trading_service import get_trading_service
 from src.monitoring.health_check import get_health_monitor
@@ -84,6 +92,144 @@ async def create_trade(
     return TradeResponse(
         status="success",
         message="request accepted, processing in background",
+        request_id=request_id
+    )
+
+
+@router.post("/api/trade/adjust", response_model=TradeResponse, status_code=status.HTTP_200_OK)
+async def adjust_position(
+    request: AdjustPositionRequest,
+    _: bool = Depends(verify_api_key)
+) -> TradeResponse:
+    """
+    Adjust an existing position by a percentage increase or decrease.
+    """
+    health_monitor = get_health_monitor()
+    if not health_monitor.is_api_healthy():
+        raise HTTPException(
+            status_code=503,
+            detail="Lighter API is currently unavailable"
+        )
+    
+    trading_service = get_trading_service()
+    
+    # Resolve market
+    try:
+        market_result = await trading_service.market_service.validate_market(
+            market_id=request.market_id,
+            symbol=request.symbol
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    resolved_market_id = market_result['market_id']
+    market_info = market_result['market_info']
+    resolved_symbol = market_info.get('symbol', request.symbol or f"ID{resolved_market_id}")
+    
+    # Fetch latest account data to determine current position
+    account_info = await trading_service.get_account_info(request.account_index)
+    if not account_info:
+        raise HTTPException(status_code=500, detail="Failed to retrieve account information")
+    
+    accounts = account_info.get('accounts', [])
+    if not accounts:
+        raise HTTPException(status_code=500, detail="No account data returned from Lighter API")
+    
+    account_data = accounts[0]
+    positions = account_data.get('positions', [])
+    
+    target_position: Dict = next(
+        (pos for pos in positions if pos.get('market_id') == resolved_market_id),
+        None
+    )
+    
+    if not target_position:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No existing position for market {resolved_market_id} to adjust"
+        )
+    
+    current_position_size = abs(float(target_position.get('position', 0)))
+    if current_position_size <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Current position size is zero for market {resolved_market_id}"
+        )
+    
+    position_sign = target_position.get('sign')
+    if position_sign not in (-1, 1):
+        # Fallback to position size sign if sign is missing or zero
+        raw_position = float(target_position.get('position', 0))
+        position_sign = 1 if raw_position >= 0 else -1
+    
+    target_base_amount = current_position_size * request.percentage
+    if target_base_amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Calculated adjustment amount is zero; increase percentage or position size"
+        )
+    
+    # Determine trade direction based on adjustment intent
+    if request.adjustment_type == "increase":
+        trade_type = "long" if position_sign > 0 else "short"
+    else:
+        trade_type = "short" if position_sign > 0 else "long"
+    
+    current_price = await trading_service.get_current_price(resolved_market_id)
+    if current_price is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to fetch current price for adjustment"
+        )
+    
+    target_quote_amount = target_base_amount * current_price
+    total_asset_value = float(account_data.get('total_asset_value', 0))
+    scaling_factor = trading_service.config.scaling_factor or 1.0
+    
+    reference_ratio = 0.0
+    if total_asset_value > 0 and scaling_factor > 0:
+        reference_ratio = target_quote_amount / (total_asset_value * scaling_factor)
+        reference_ratio = max(0.0, min(reference_ratio, 1.0))
+    else:
+        reference_ratio = min(request.percentage, 1.0)
+    
+    # Prepare queue payload with override amounts
+    request_data = {
+        "account_index": request.account_index,
+        "market_id": resolved_market_id,
+        "symbol": resolved_symbol,
+        "trade_type": trade_type,
+        "reference_position_ratio": reference_ratio,
+        "override_base_amount": target_base_amount,
+        "override_quote_amount": target_quote_amount,
+        "override_context": {
+            "source": "percentage_adjust_endpoint",
+            "adjustment_type": request.adjustment_type,
+            "percentage": request.percentage,
+            "position_before": current_position_size,
+            "trade_type": trade_type,
+        },
+    }
+    
+    queue_manager = get_queue_manager()
+    request_id = await queue_manager.enqueue(
+        account_index=request.account_index,
+        request_data=request_data,
+        handler=trading_service.execute_trade_with_retry
+    )
+    
+    logger.info(
+        "Percentage adjustment request enqueued: account=%s market=%s type=%s percentage=%s request_id=%s",
+        request.account_index,
+        resolved_market_id,
+        request.adjustment_type,
+        request.percentage,
+        request_id,
+    )
+    
+    return TradeResponse(
+        status="success",
+        message="adjustment request accepted, processing in background",
         request_id=request_id
     )
 
