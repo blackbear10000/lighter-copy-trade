@@ -48,6 +48,11 @@ class TelegramService:
         self.base_url = f"https://api.telegram.org/bot{self.config.telegram_bot_api_key}"
         self.chat_id = self.config.telegram_group_id
         self.thread_id = self.config.telegram_thread_id
+        self.top_separator = "╔════════════════════════════════════╗"
+    
+    def _prepend_separator(self, message: str) -> str:
+        """Add a bold separator at the top of every message for visual isolation."""
+        return f"{self.top_separator}\n{message}"
     
     async def send_message(self, text: str, parse_mode: str = "Markdown") -> bool:
         """
@@ -198,6 +203,14 @@ class TelegramService:
                         
                         # Determine position direction indicator
                         direction_indicator = "📈" if sign == 1 else "📉"
+                        if sign not in (-1, 1):
+                            if pos_size > 0:
+                                sign = 1
+                                direction_indicator = "📈"
+                            elif pos_size < 0:
+                                sign = -1
+                                direction_indicator = "📉"
+                        direction_label = "LONG" if sign == 1 else "SHORT"
                         
                         # Format position line with better structure
                         pnl_sign = "+" if pnl >= 0 else ""
@@ -208,6 +221,7 @@ class TelegramService:
                         message += f"  Size: `{abs(pos_size):.6f}` {pos_symbol_raw}\n"
                         message += f"  Value: `${pos_value:.2f}`\n"
                         message += f"  Entry: `${avg_entry_price:.6f}`\n"
+                        message += f"  Direction: `{direction_label}`\n"
                         message += f"  PnL: {pnl_color} {pnl_sign}${pnl:.2f} ({pnl_pct_sign}{pnl_pct:.2f}%)\n"
                         message += f"  Leverage: `{leverage_str}`\n"
                         message += f"  Stop Loss: `{stop_loss_str}`\n"
@@ -223,6 +237,7 @@ class TelegramService:
                     # Add account total assets and leverage
                     account_data = accounts[0]
                     total_asset_value = float(account_data.get('total_asset_value', '0'))
+                    available_balance_value = float(account_data.get('available_balance', '0'))
                     
                     # Calculate leverage ratio: Total Value (positions) / Account Total Assets
                     leverage_ratio = 0.0
@@ -230,6 +245,7 @@ class TelegramService:
                         leverage_ratio = total_value / total_asset_value
                     
                     message += f"*Account Assets:* `${total_asset_value:.2f}`\n"
+                    message += f"*Available Balance:* `${available_balance_value:.2f}`\n"
                     message += f"*Leverage Ratio:* `{leverage_ratio:.2f}x`\n"
                 else:
                     message += f"*No open positions*\n"
@@ -237,6 +253,7 @@ class TelegramService:
                     # Even with no positions, show account info
                     account_data = accounts[0]
                     total_asset_value = float(account_data.get('total_asset_value', '0'))
+                    available_balance_value = float(account_data.get('available_balance', '0'))
                     
                     # No positions, leverage ratio is 0
                     leverage_ratio = 0.0
@@ -244,11 +261,12 @@ class TelegramService:
                     message += f"\n*📊 Account Summary*\n"
                     message += f"━━━━━━━━━━━━━━━━━━━━\n"
                     message += f"*Account Assets:* `${total_asset_value:.2f}`\n"
+                    message += f"*Available Balance:* `${available_balance_value:.2f}`\n"
                     message += f"*Leverage Ratio:* `{leverage_ratio:.2f}x`\n"
             else:
                 message += f"*No open positions*\n"
         
-        return message
+        return self._prepend_separator(message)
     
     def format_order_closing_message(
         self,
@@ -343,7 +361,7 @@ class TelegramService:
                                     message += f"*This Close:* {close_color} {close_sign}${realized_pnl_from_close:.2f}\n"
                                     break
         
-        return message
+        return self._prepend_separator(message)
     
     def format_error_message(
         self,
@@ -375,15 +393,15 @@ class TelegramService:
             message += f"━━━━━━━━━━━━━━━━━━━━\n"
             for key, value in context.items():
                 # For code blocks, only escape backticks
-                escaped_key = escape_markdown(str(key), for_code_block=True)
+                key_text = escape_markdown(str(key), for_code_block=True)
                 escaped_value = str(value)
                 # Truncate very long values for readability
                 if len(escaped_value) > 100:
                     escaped_value = escaped_value[:97] + "..."
                 escaped_value = escape_markdown(escaped_value, for_code_block=True)
-                message += f"*{escape_markdown(str(key))}:* `{escaped_value}`\n"
+                message += f"`{key_text}`: `{escaped_value}`\n"
         
-        return message
+        return self._prepend_separator(message)
     
     async def notify_order_opening(
         self,
