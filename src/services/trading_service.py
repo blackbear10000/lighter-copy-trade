@@ -354,6 +354,20 @@ class TradingService:
             min_quote_amount = float(market_info.get('min_quote_amount', 0))
             price_decimals = market_info.get('supported_price_decimals', 6)
             size_decimals = market_info.get('supported_size_decimals', 0)
+            positions = account_data.get('positions', [])
+            current_position = next(
+                (pos for pos in positions if pos.get('market_id') == resolved_market_id),
+                None
+            )
+            current_position_size = float(current_position.get('position', 0)) if current_position else 0.0
+            current_position_size_abs = abs(current_position_size)
+            current_position_direction = None
+            if current_position_size != 0:
+                current_position_direction = current_position.get('sign')
+                if current_position_direction not in (-1, 0, 1):
+                    current_position_direction = 1 if current_position_size > 0 else -1
+                elif current_position_direction == 0:
+                    current_position_direction = 1 if current_position_size > 0 else -1
             
             logger.info(
                 f"Account balance info: total_assets={total_asset_value}, "
@@ -598,23 +612,65 @@ class TradingService:
                     }
                 )
             
+            # If there is an existing position and this trade would overshoot in the opposite direction,
+            # execute a full close instead of reversing into a new position.
+            if (
+                current_position_direction in (1, -1)
+                and current_position_size_abs > 0
+                and position_size.get('base_amount', 0) > 0
+            ):
+                requested_base_amount = position_size['base_amount']
+                precision_step = 10 ** (-size_decimals) if size_decimals > 0 else 1.0
+                tolerance = precision_step / 2
+                should_close_instead = False
+                auto_close_reason = ""
+                
+                if current_position_direction == 1 and trade_type == "short":
+                    if requested_base_amount > current_position_size_abs + tolerance:
+                        should_close_instead = True
+                        auto_close_reason = (
+                            f"Existing long size {current_position_size_abs:.6f} would be reversed by "
+                            f"short request {requested_base_amount:.6f}"
+                        )
+                elif current_position_direction == -1 and trade_type == "long":
+                    if requested_base_amount > current_position_size_abs + tolerance:
+                        should_close_instead = True
+                        auto_close_reason = (
+                            f"Existing short size {current_position_size_abs:.6f} would be reversed by "
+                            f"long request {requested_base_amount:.6f}"
+                        )
+                
+                if should_close_instead:
+                    logger.info(
+                        "Opposite-direction order exceeds current position. Executing close instead: %s",
+                        auto_close_reason
+                    )
+                    await self.telegram_service.notify_error(
+                        "Opposite Trade Converted to Close",
+                        auto_close_reason,
+                        {
+                            "request_id": request_id,
+                            "account_index": account_index,
+                            "market_id": resolved_market_id,
+                            "symbol": resolved_symbol,
+                            "trade_type": trade_type,
+                            "existing_position_direction": current_position_direction,
+                            "existing_position_size": current_position_size_abs,
+                            "requested_base_amount": requested_base_amount,
+                        }
+                    )
+                    return await self._execute_close_trade(
+                        account,
+                        resolved_market_id,
+                        resolved_symbol,
+                        account_info
+                    )
+            
             # Determine order direction
             is_long = trade_type == "long"
             is_ask = not is_long  # is_ask=True means sell (short), is_ask=False means buy (long)
             
-            # Check current position direction before executing trade
-            # This is to determine if we should update stop loss after the trade
-            current_position_direction = None
-            accounts = account_info.get('accounts', [])
-            if accounts and len(accounts) > 0:
-                positions = accounts[0].get('positions', [])
-                for pos in positions:
-                    if pos.get('market_id') == resolved_market_id:
-                        position_size_before = float(pos.get('position', 0))
-                        if position_size_before != 0:
-                            # sign: 1 for long, -1 for short
-                            current_position_direction = pos.get('sign', 1)
-                        break
+            # Use previously loaded current position direction (None if no position)
             
             # Convert amounts to integer format
             base_amount_int = self.convert_base_amount_to_integer(

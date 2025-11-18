@@ -68,6 +68,9 @@ uvicorn src.main:app --host 0.0.0.0 --port 8000
 
 Execute a trade request.
 
+**Protective Behavior:**  
+If the account already holds a long position and receives a sell/short order larger than the remaining long size, the service automatically converts the request into a full close instead of opening a short. The same safeguard applies to short positions that receive oversized buy/long orders. This prevents accidental position flips.
+
 **Request Body:**
 ```json
 {
@@ -228,6 +231,9 @@ Check service health status.
 - `long`: Open a long position
 - `short`: Open a short position
 - `close`: Close entire position for the specified market
+
+**Opposite-Direction Safeguard:**  
+When an opposite-side order would exceed the size of the current position, the system executes a full `close` instead of opening a new position in the reverse direction.
 
 ## Authentication
 
